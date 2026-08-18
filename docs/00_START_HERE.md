@@ -1,7 +1,8 @@
 # Agent Bridge 最终开发指导
 
-**版本：** 2026-08-18 / Final Guidance  
-**建议文档基线：** `Agent_Bridge_Technical_Design_V0.5.md`（架构决策见 V0.4）
+**版本：** 2026-08-19 / Final Guidance  
+**建议文档基线：** `Agent_Bridge_Technical_Design_V0.5.md`（架构决策见 V0.4）  
+**产品方向：** `docs/decisions/ADR-001-post-mvp-direction.md` — **Accepted，路线 B**（MCP stdio V1；HTTP/SQLite/GUI/EXE 推迟至 ADR-002）。可分发 V1 的 P0 门在该 ADR 的 Release Gates。
 
 ---
 

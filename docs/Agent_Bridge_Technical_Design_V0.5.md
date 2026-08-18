@@ -158,8 +158,12 @@ npm test
 
 已落地本轮：`doctor` / `agents` / `version`、needs-attention、journal redaction、Claude `session/load`、`prune`、MCP Core 单例、`WAITING_FOR_INPUT` + `bridge_respond` permission 闸、wait 预算 → `TASK_TIMED_OUT`、hydrate 收 in-flight + 状态落盘。
 
-仍未做（明确推迟）：
+产品方向见 **ADR-001 Accepted / 路线 B**（`docs/decisions/ADR-001-post-mvp-direction.md`）。HTTP daemon、SQLite、GUI、EXE 推迟，需新证据才开 ADR-002。
 
-1. ACP interactive question 全文（非 permission 的提问）
-2. loopback HTTP Core daemon + SQLite
-3. Session TTL / 无事件 stall 探测（目前只按 `timeoutMs` 硬截止）
+可分发 V1 的 **P0 阻塞项**（尚未实现）：跨进程单写者 `CORE_LOCK_HELD`；`tasks.json` 原子写入 + 损坏 fail-closed；`FINALIZING` 确定性崩溃恢复。
+
+仍不做（直至 ADR-002）：
+
+1. loopback HTTP Core daemon + SQLite
+2. WebView2 GUI / 单文件 EXE
+3. ACP interactive question 全文（非 permission）；Session TTL / stall 按 ADR-001 语义，不自动完成、不默认 cancel
