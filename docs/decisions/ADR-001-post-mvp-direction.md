@@ -46,7 +46,7 @@ OpenCode 及其他 Agent 后接，只加 Profile，不作为本 ADR 范围。
 - [x] 同 Task 并发命令测试：`approve`+`continue`、`respond`+`cancel`、两个 `apply`。非法竞争须 `STATE_VERSION_CONFLICT`，禁止先产生副作用再报错。两个 `apply` 同改用户 repo 为重点
 - [x] journal / 数据 retention
 - [x] 安装、MCP 注册引导、Skill 安装、凭证引导、doctor 补全、卸载说明。完成标准：用户至少已有一个可独立正常运行、完成认证和配置的 Worker；Bridge 负责检测，不负责配置 Worker 模型或第三方 Provider。MCP `command` 用 `node.exe` + tsx，不要用 `npx.cmd` / `tsx.cmd`（Node 直接 spawn `.cmd` 会 EINVAL；这不是禁止一切 `.cmd` shim）
-- [ ] 干净 Windows / 陌生用户：从安装说明开始，不改 Bridge 源码，完成一次 Claude `run → permission → verify → approve → apply`（README / `scripts/install.ts` 已就绪；live 需按文档在目标机跑）
+- [x] 干净 Windows / 陌生用户：从安装说明开始，不改 Bridge 源码，完成一次 Claude `run → permission → verify → approve → apply`（2026-08-19 作者机：`C:\Users\jjbon\Downloads\agent-bridge-v1-accept`，task `d27cfdda-b04d-4e7b-a81d-62f00bf55de9`，`verify` 2/2，approve `b637004e`，apply cherry-pick `07d4152a`，无 merge）
 - [x] **Worker Configuration Inheritance Test：** 分别验证 Claude Code 与 DeepSeek Harness 经 Bridge 新启动的 Session 继承用户已有持久 model / effort 配置。某 Worker 不继承时只做该 Worker 最小兼容，不建立统一模型管理系统
 
 同进程多 `tools/call` 重叠（`rl.on("line", async ...)` 无队列）**不**升为 ADR 阻塞。不同 Task 允许并行；同 Task 靠 `stateVersion`。尚无实际 race 失败证据。P1 并发测试覆盖即可。

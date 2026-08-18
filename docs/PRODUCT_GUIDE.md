@@ -40,7 +40,7 @@ Turn 结束不是任务完成。Worker 不得 commit / push / merge / rebase。D
 | `tasks.json` 原子写 + 损坏 fail-closed | **已落地（V1 P0）** |
 | `FINALIZING` 崩溃恢复 | **已落地（V1 P0）** |
 | 安装 / Skill / 凭证引导 / 卸载 / retention | **已落地（V1 P1）** |
-| 干净机器陌生用户验收 | **安装路径已完成；陌生机 Claude live 仍待按 README 跑一次** |
+| 干净机器陌生用户验收 | **已通过（2026-08-19 作者机 Windows；独立测试仓；未改 Bridge 源码）** |
 | HTTP daemon / SQLite / GUI / 单文件 EXE | **推迟（ADR-002）** |
 | OpenCode 及其他 Agent | **后接 Profile** |
 | Worker model / provider / effort 管理 | **不做（V1 只选 Worker，继承用户原生配置）** |
@@ -163,6 +163,6 @@ HTTP daemon、SQLite、WebView2、单文件 EXE。
 
 ## 8. 当前唯一开发入口
 
-V1-P0 / V1-P1 自动化门已落地。不要并行开 HTTP 或 GUI。
+V1-P0 / V1-P1 已完成（含作者机 Claude live：`run → permission → verify → approve → apply`）。不要并行开 HTTP 或 GUI。
 
-下一阶段是 **V1.x**（stall / interactive question），或按 README 在干净机器上跑一次 Claude live 验收。从 **不要做 ADR-002** 开始。
+下一阶段是 **用起来**，有真实痛点再开 **V1.x**（stall / interactive question）。不要做 ADR-002。

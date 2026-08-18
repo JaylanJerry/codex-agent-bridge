@@ -121,12 +121,14 @@ const tools = [
   {
     name: "bridge_respond",
     description:
-      "Answer a WAITING_FOR_INPUT permission prompt. Pass optionId from task.pendingInput.options, or cancelled. Requires expectedStateVersion. Then waits until the next prompt or AWAITING_REVIEW.",
+      "Answer a WAITING_FOR_INPUT permission prompt. Always pass project and task (the task UUID; field name is task). optionId comes from pendingInput.options (Claude may be allow). Requires stateVersion. Then waits until the next prompt or AWAITING_REVIEW.",
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "string" },
-        task: { type: "string" },
+        project: { type: "string", description: "Git repo path used in bridge_run." },
+        projectPath: { type: "string", description: "Alias of project." },
+        task: { type: "string", description: "Task UUID. Field name is task, not taskId." },
+        taskId: { type: "string", description: "Alias of task." },
         stateVersion: { type: "number" },
         optionId: { type: "string", description: "Permission optionId, or cancelled" },
         timeoutMs: { type: "number" },
@@ -245,6 +247,19 @@ const tools = [
   },
 ];
 
+for (const tool of tools) {
+  const props = (
+    tool.inputSchema as { properties?: Record<string, { type?: string; description?: string }> }
+  ).properties;
+  if (!props) continue;
+  if (props.task && !props.taskId) {
+    props.taskId = { type: "string", description: "Alias of task (the task UUID)." };
+  }
+  if (props.project && !props.projectPath) {
+    props.projectPath = { type: "string", description: "Alias of project." };
+  }
+}
+
 function send(message: unknown): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -265,14 +280,21 @@ function toolResult(payload: BridgeResult) {
   };
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return undefined;
+}
+
 function toRequest(name: string, args: Record<string, unknown> = {}): BridgeRequest {
   const command = name.replace(/^bridge_/, "").replaceAll("_", "-");
   return {
     command,
-    project: typeof args.project === "string" ? args.project : undefined,
+    project: firstString(args.project, args.projectPath),
     objective: typeof args.objective === "string" ? args.objective : undefined,
     worker: typeof args.worker === "string" ? args.worker : undefined,
-    task: typeof args.task === "string" ? args.task : undefined,
+    task: firstString(args.task, args.taskId),
     notes: typeof args.notes === "string" ? args.notes : undefined,
     clientRequestId: typeof args.clientRequestId === "string" ? args.clientRequestId : undefined,
     stateVersion: typeof args.stateVersion === "number" ? args.stateVersion : undefined,
@@ -287,6 +309,17 @@ function toRequest(name: string, args: Record<string, unknown> = {}): BridgeRequ
     permissionMode: args.permissionMode === "auto" ? "auto" : "gate",
     optionId: typeof args.optionId === "string" ? args.optionId : undefined,
   };
+}
+
+function missingRequired(name: string, args: Record<string, unknown>): string[] {
+  const tool = tools.find((item) => item.name === name);
+  const required = (tool?.inputSchema as { required?: string[] } | undefined)?.required ?? [];
+  return required.filter((key) => {
+    if (key === "task") return !firstString(args.task, args.taskId);
+    if (key === "project") return !firstString(args.project, args.projectPath);
+    const value = args[key];
+    return value === undefined || value === null || value === "";
+  });
 }
 
 const rl = createInterface({ input: process.stdin });
@@ -323,7 +356,23 @@ rl.on("line", async (line) => {
         fail(id, `unknown tool ${name}`);
         return;
       }
-      const payload = await dispatch(toRequest(name, params?.arguments ?? {}));
+      const args = params?.arguments ?? {};
+      const missing = missingRequired(name, args);
+      if (missing.length > 0) {
+        reply(
+          id,
+          toolResult({
+            ok: false,
+            code: "MISSING_ARGUMENT",
+            error:
+              missing.includes("task")
+                ? `missing ${missing.join(", ")} (pass the task UUID in field "task")`
+                : `missing ${missing.join(", ")}`,
+          }),
+        );
+        return;
+      }
+      const payload = await dispatch(toRequest(name, args));
       reply(id, toolResult(payload));
     } catch (error) {
       fail(id, error instanceof Error ? error.message : String(error));

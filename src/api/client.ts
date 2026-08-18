@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Journal } from "../persistence/journal.ts";
@@ -59,7 +59,13 @@ export type BridgeRequest = {
 };
 
 function required(value: string | undefined, name: string): string {
-  if (!value) throw new Error(`missing ${name}`);
+  if (!value) {
+    throw new Error(
+      name === "task"
+        ? "missing task (pass the task UUID in field \"task\", not taskId)"
+        : `missing ${name}`,
+    );
+  }
   return value;
 }
 
@@ -289,7 +295,15 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       return { ok: true, removed: result.removed };
     }
     if (request.command === "logs") {
-      const raw = readFileSync(join(dataDirFor(projectPath), "journal.ndjson"), "utf8");
+      const journalPath = join(dataDirFor(projectPath), "journal.ndjson");
+      if (!existsSync(journalPath)) {
+        return {
+          ok: false,
+          code: "JOURNAL_MISSING",
+          error: `journal missing: ${journalPath}`,
+        };
+      }
+      const raw = readFileSync(journalPath, "utf8");
       const events = raw
         .split(/\r?\n/)
         .filter(Boolean)

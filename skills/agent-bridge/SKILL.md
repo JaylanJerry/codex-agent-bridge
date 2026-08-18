@@ -42,6 +42,8 @@ bridge_run
 
 破坏性调用必须带**当前** `task.stateVersion`。冲突时不要重试旧版本。
 
+**每次** `bridge_*` 任务调用都必须带同一个 `project` 路径。任务 UUID 的字段名是 `task`，不是 `taskId`。`bridge_respond` 示例：`project` + `task` + `stateVersion` + `optionId`。漏掉 `project` 会查到空任务库或报 journal 不存在，看起来像状态丢失。
+
 `clientRequestId` 相同且内容相同会返回同一 task；内容不同会 `TASK_ALREADY_EXISTS`。
 
 MCP 默认 `permissionMode=gate`：Worker 要写文件/跑命令时会停在 `WAITING_FOR_INPUT`，不要自动当任务完成。选 `allow_once`，除非用户明确禁止。optionId 以 `pendingInput.options` 为准（Claude 可能是 `allow` 而不是 `allow-once`）。没有 live waiter 时（Core 重启）不要 respond，改 `bridge_continue`。

@@ -205,3 +205,63 @@ test("MCP hydrates leftover RUNNING into AWAITING_REVIEW and persists it", async
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("MCP required args: missing project/task is explicit; taskId alias works", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-mcp-args-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "README.md"), "base\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  mkdirSync(join(root, ".agent-bridge-data"), { recursive: true });
+  writeFileSync(
+    join(root, ".agent-bridge-data", "tasks.json"),
+    `${JSON.stringify(
+      {
+        tasks: [
+          {
+            taskId: "dead-run",
+            clientRequestId: "hyd-args",
+            state: "RUNNING",
+            stateVersion: 4,
+            verdict: null,
+            interrupted: false,
+            objective: "x",
+            projectPath: root,
+            workerId: "replay",
+          },
+        ],
+        byRequest: [["hyd-args", "dead-run"]],
+        reviewHashes: [],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  const client = new McpStdioClient();
+  try {
+    await client.initialize();
+    const noProject = await client.callTool("bridge_status", {});
+    assert.equal(noProject.isError, true);
+    assert.match(String((noProject.structuredContent as BridgeResult).error), /missing project/);
+
+    const noTask = await client.callTool("bridge_respond", {
+      project: root,
+      stateVersion: 4,
+      optionId: "allow",
+    });
+    assert.equal(noTask.isError, true);
+    assert.match(String((noTask.structuredContent as BridgeResult).error), /missing task/);
+
+    const viaAlias = await client.callTool("bridge_status", { project: root, taskId: "dead-run" });
+    const listed = viaAlias.structuredContent as BridgeResult;
+    assert.equal(viaAlias.isError, false);
+    assert.equal(listed.task?.taskId, "dead-run");
+    assert.equal(listed.task?.state, "AWAITING_REVIEW");
+  } finally {
+    client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
