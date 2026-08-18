@@ -11,6 +11,20 @@ export const replayProfile: WorkerProfile = {
   launch: { command: "replay", args: [] },
 };
 
+export function fakeAcpProfile(repoRoot: string): WorkerProfile {
+  return {
+    id: "fake",
+    displayName: "Fake ACP",
+    preferredRuntime: "acp",
+    ownership: "bridge-owned",
+    launch: {
+      command: process.execPath,
+      args: ["--import", "tsx", join(repoRoot, "tests/fixtures/fake-acp-agent.ts")],
+      cwd: repoRoot,
+    },
+  };
+}
+
 export const deepSeekProfile = (launch: WorkerProfile["launch"]): WorkerProfile => ({
   id: "deepseek",
   displayName: "DeepSeek Harness",

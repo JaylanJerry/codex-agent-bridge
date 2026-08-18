@@ -57,6 +57,8 @@ function toRequest(flags: FlagMap): BridgeRequest {
     files: parseWrites(flags),
     timeoutMs: flags.values["timeout-ms"] ? Number(flags.values["timeout-ms"]) : undefined,
     needsAttention: flags.values["needs-attention"] === "true",
+    permissionMode: flags.values["permission-mode"] === "gate" ? "gate" : "auto",
+    optionId: flags.values["option-id"],
   };
 }
 

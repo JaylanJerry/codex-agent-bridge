@@ -1,7 +1,16 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { RuntimeDriver, RuntimeSession, StartOptions, TurnInput, WorkerProfile } from "../contract.ts";
+import type {
+  PermissionHandler,
+  PermissionOutcome,
+  RuntimeDriver,
+  RuntimeSession,
+  StartOptions,
+  TurnInput,
+  WorkerProfile,
+} from "../contract.ts";
+import { autoSelectPermission } from "../contract.ts";
 import type { JobHandle } from "../../process/job-object.ts";
 
 type LiveSession = {
@@ -10,6 +19,7 @@ type LiveSession = {
   connection: acp.ClientSideConnection;
   job?: JobHandle;
   stderr: string;
+  permissionHandler?: PermissionHandler;
 };
 
 function extractText(prompt: TurnInput["text"] | unknown): string {
@@ -76,13 +86,21 @@ export class AcpRuntimeDriver implements RuntimeDriver {
     );
     live.connection = new acp.ClientSideConnection(() => {
       return {
-        async requestPermission(params) {
-          const selected =
-            params.options.find((option) => option.kind === "allow_once") ??
-            params.options.find((option) => option.optionId.includes("allow")) ??
-            params.options[0];
-          if (!selected) return { outcome: { outcome: "cancelled" } };
-          return { outcome: { outcome: "selected", optionId: selected.optionId } };
+        requestPermission: async (params: acp.RequestPermissionRequest) => {
+          const options = params.options.map((option) => ({
+            optionId: option.optionId,
+            kind: option.kind,
+            name: option.name,
+          }));
+          const decided: PermissionOutcome = live.permissionHandler
+            ? await live.permissionHandler({
+                sessionId: params.sessionId,
+                title: params.toolCall.title ?? undefined,
+                options,
+              })
+            : autoSelectPermission(options);
+          if (decided.outcome === "cancelled") return { outcome: { outcome: "cancelled" } };
+          return { outcome: { outcome: "selected", optionId: decided.optionId } };
         },
         async sessionUpdate() {},
       };
@@ -125,6 +143,11 @@ export class AcpRuntimeDriver implements RuntimeDriver {
         `${error instanceof Error ? error.message : String(error)}; stderr=${live.stderr}`,
       );
     }
+  }
+
+  setPermissionHandler(sessionId: string, handler: PermissionHandler | undefined): void {
+    const live = this.live.get(sessionId);
+    if (live) live.permissionHandler = handler;
   }
 
   async sendTurn(session: RuntimeSession, input: TurnInput): Promise<{ stopReason: string }> {

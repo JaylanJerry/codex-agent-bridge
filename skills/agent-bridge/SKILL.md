@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: Delegate implementation to an external coding agent through Agent Bridge. Use when Codex should supervise Claude Code or DeepSeek Harness instead of editing the target repo itself. Covers bridge_run, continue, approve, apply, reject, cancel, doctor, agents, prune.
+description: Delegate implementation to an external coding agent through Agent Bridge. Use when Codex should supervise Claude Code or DeepSeek Harness instead of editing the target repo itself. Covers bridge_run, continue, respond, approve, apply, reject, cancel, doctor, agents, prune.
 ---
 
 # Agent Bridge
@@ -25,15 +25,17 @@ MCP server 名：`agent-bridge`
 
 ```text
 bridge_run
+→ 若 state=WAITING_FOR_INPUT：读 pendingInput.options，bridge_respond（optionId + stateVersion）
+→ 重复直到 AWAITING_REVIEW
 → 读 structuredContent.reviewPacket（含 verification）
 → verification.passed=false 时不要 approve，除非用户明确要求
 → 不通过：bridge_continue（notes + stateVersion）
-→ 再读 ReviewPacket
+→ 再读 ReviewPacket（continue 过程中也可能再 WAITING_FOR_INPUT）
 → 通过：bridge_approve（stateVersion）
 → 用户要落到当前分支时：bridge_apply（cherry-pick，不是 merge）
 ```
 
-`worker`：调试用 `replay`；真干活用 `claude` 或 `deepseek`。
+`worker`：调试用 `replay`；闸门自检可用 `fake`；真干活用 `claude` 或 `deepseek`。
 
 项目里如果有 `.agent-bridge/verify.json`，`bridge_run` 会默认跑其中全部 verifyId。也可显式传 `verifyIds`。示例：`templates/verify.json`。
 
@@ -41,7 +43,11 @@ bridge_run
 
 `clientRequestId` 相同且内容相同会返回同一 task；内容不同会 `TASK_ALREADY_EXISTS`。
 
-掉线后先 `bridge_status`（`needsAttention: true`）或 `bridge_doctor`。`doctor` 标出遗留 worktree 时用 `bridge_prune` 拆掉；不会删任务分支或 checkpoint，也不会动进行中的任务。
+MCP 默认 `permissionMode=gate`：Worker 要写文件/跑命令时会停在 `WAITING_FOR_INPUT`，不要自动当任务完成。选 `allow_once`，除非用户明确禁止。没有 live waiter 时（Core 重启）不要 respond，改 `bridge_continue`。
+
+CLI 默认 auto（一次进程无法跨调用停闸）。
+
+掉线后先 `bridge_status`（`needsAttention: true`）或 `bridge_doctor`。`doctor` 标出遗留 worktree 时用 `bridge_prune`。
 
 ## 硬规则
 

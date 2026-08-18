@@ -36,6 +36,7 @@ try {
     worker: "claude",
     clientRequestId: `claude-mcp-${Date.now()}`,
     timeoutMs: 600_000,
+    permissionMode: "auto",
     objective:
       "Fix src/math.ts add() so it returns a+b. Do not commit, push, or change sub(). Stop after the file is fixed.",
   });

@@ -44,6 +44,7 @@ review-packet
 diff
 approve
 continue
+respond
 reject
 cancel
 apply
@@ -54,11 +55,11 @@ version
 prune
 ```
 
-未实现（Phase 2 其余项）：`respond`、SQLite、loopback HTTP daemon、EffectivePermission 人工闸、Session TTL / stall daemon。
+未实现（Phase 2 其余项）：SQLite、loopback HTTP daemon、Session TTL / stall daemon、interactive question 全文（目前只闸 ACP permission）。
 
-MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_apply` / `bridge_logs` / `bridge_doctor` / `bridge_agents` / `bridge_version` / `bridge_prune`），走 `src/api/client.ts`。
+MCP stdio server 已提供与 CLI 相同的命令，走 `src/api/client.ts`。同一 MCP 进程内 Core 单例，live ACP session 可跨 `bridge_*` 调用存活。
 
-`status --needs-attention` / `bridge_status.needsAttention` 只返回仍需 Supervisor 处理的任务：`AWAITING_REVIEW`、`FAILED`、`TASK_TIMED_OUT`，或非终态的 `interrupted`。`CANCELLED` / `COMPLETED` 即使带了 `interrupted` 也不列入。
+`status --needs-attention` / `bridge_status.needsAttention` 只返回仍需 Supervisor 处理的任务：`AWAITING_REVIEW`、`WAITING_FOR_INPUT`、`FAILED`、`TASK_TIMED_OUT`，或非终态的 `interrupted`。`CANCELLED` / `COMPLETED` 即使带了 `interrupted` 也不列入。
 
 `doctor` 检查 git / Node / Job Object / Worker 适配器 / **凭证是否存在（不打印值）** / Codex MCP 注册；若给了 `project`，再检查 `verify.json` 和遗留 `agent-bridge/` worktree。终态任务占用的 worktree 也算遗留。`prune` / `bridge_prune` 拆掉这些 worktree，保留任务分支。
 
@@ -73,14 +74,15 @@ MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_app
 ### 2.2 状态机（Phase 1）
 
 ```text
-QUEUED → STARTING → RUNNING → VERIFYING? → AWAITING_REVIEW
+QUEUED → STARTING → RUNNING → WAITING_FOR_INPUT? → VERIFYING? → AWAITING_REVIEW
+RUNNING ↔ WAITING_FOR_INPUT     # permission gate / respond
 AWAITING_REVIEW → RUNNING          # continue
 AWAITING_REVIEW → FINALIZING → COMPLETED  # approve
 任意允许边 → FAILED / CANCELLED
 RUNNING → TASK_TIMED_OUT
 ```
 
-V0.4 的 `WAITING_FOR_APPROVAL` / `WAITING_FOR_INPUT` **推迟到 Phase 2**（interactive question / permission 人工闸）。Phase 1 permission 由 Runtime 自动选 `allow_once`。
+MCP 默认 `permissionMode=gate`：ACP `requestPermission` 进入 `WAITING_FOR_INPUT`，Codex 调 `bridge_respond`。CLI 默认 `auto`（选 `allow_once`）。Core 重启后 live waiter 消失，hydrate 把 `WAITING_FOR_INPUT` 收成 `AWAITING_REVIEW` + `interrupted`，用 `continue` 而不是 `respond`。
 
 Turn 结束 ≠ 任务完成。只有 Codex `approve` 后才 `COMPLETED`。
 
@@ -153,11 +155,10 @@ npm test
 
 ## 6. 下一步（Phase 2 剩余）
 
-已落地本轮：`doctor` / `agents` / `version`、`tasks --needs-attention`、journal redaction、Claude `session/load`、`prune` 清理遗留 worktree。
+已落地本轮：`doctor` / `agents` / `version`、needs-attention、journal redaction、Claude `session/load`、`prune`、MCP Core 单例、`WAITING_FOR_INPUT` + `bridge_respond` permission 闸。
 
 仍未做：
 
-1. `respond` / interactive question / permission 人工闸
+1. ACP interactive question 全文（非 permission 的提问）
 2. loopback HTTP Core daemon + SQLite
 3. Session TTL / stall 检测
-4. 把 `.agent-bridge/verify.json` 编进用户测试仓库（模板在 `templates/verify.json`；测试夹已自建）

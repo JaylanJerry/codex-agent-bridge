@@ -16,7 +16,8 @@ import {
 import { changeSetHash, collectChanges, worktreeDiff } from "../workspace/changes.ts";
 import { buildReviewPacket, type ReviewPacket } from "../review/packet.ts";
 import { listVerifyIds, runVerification } from "../verification/runner.ts";
-import type { RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
+import type { PermissionMode, PermissionOutcome, RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
+import { autoSelectPermission } from "../runtime/contract.ts";
 
 export class TaskAlreadyExistsError extends Error {
   constructor(public readonly taskId: string) {
@@ -39,6 +40,8 @@ export class TaskManager {
   private readonly sessions = new Map<string, { profile: WorkerProfile; sessionId: string }>();
   private readonly reviewHashes = new Map<string, string>();
   private readonly turns = new Map<string, Promise<void>>();
+  private readonly permissionResolvers = new Map<string, (outcome: PermissionOutcome) => void>();
+  private permissionMode: PermissionMode = "auto";
 
   constructor(
     private readonly drivers: Map<string, RuntimeDriver>,
@@ -55,6 +58,13 @@ export class TaskManager {
     for (const task of snapshot.tasks) this.tasks.set(task.taskId, { ...task });
     for (const [requestId, taskId] of snapshot.byRequest) this.byRequest.set(requestId, taskId);
     for (const [taskId, hash] of snapshot.reviewHashes) this.reviewHashes.set(taskId, hash);
+    this.permissionResolvers.clear();
+    for (const task of this.tasks.values()) {
+      if (task.state !== "WAITING_FOR_INPUT") continue;
+      task.interrupted = true;
+      task.pendingInput = undefined;
+      this.setState(task, "AWAITING_REVIEW");
+    }
   }
 
   snapshot(): TaskSnapshot {
@@ -122,6 +132,20 @@ export class TaskManager {
     return task;
   }
 
+  setPermissionMode(mode: PermissionMode): void {
+    this.permissionMode = mode;
+  }
+
+  invalidateRuntimeSessions(kind: RuntimeDriver["kind"]): void {
+    for (const [taskId, session] of this.sessions) {
+      if (session.profile.preferredRuntime === kind) this.sessions.delete(taskId);
+    }
+  }
+
+  private waitReturned(task: TaskRecord): boolean {
+    return this.settled(task) || task.state === "WAITING_FOR_INPUT";
+  }
+
   private settled(task: TaskRecord): boolean {
     return ["AWAITING_REVIEW", "COMPLETED", "FAILED", "CANCELLED", "TASK_TIMED_OUT"].includes(
       task.state,
@@ -166,26 +190,42 @@ export class TaskManager {
           task.taskId,
         );
       }
-      const result = await driver.sendTurn(
-        {
-          id: session.sessionId,
-          profileId: profile.id,
-          worktreePath: task.worktreePath ?? task.projectPath,
-        },
-        { sessionId: session.sessionId, text },
-      );
-      if (this.shouldAbortTurn(task)) return;
-      task.lastStopReason = result.stopReason;
-      this.journal.append("worker-turn-finished", result, task.taskId);
-      const verifyIds = task.verification?.enabled ? task.verification.verifyIds : [];
-      if (verifyIds.length > 0) {
-        this.setState(task, "VERIFYING");
-        const verification = runVerification(task.worktreePath ?? task.projectPath, verifyIds);
-        task.lastVerification = verification;
-        this.journal.append("verification-result", verification, task.taskId);
+      if (driver.setPermissionHandler) {
+        driver.setPermissionHandler(session.sessionId, async (request) => {
+          if (this.permissionMode === "auto") return autoSelectPermission(request.options);
+          return await new Promise<PermissionOutcome>((resolve) => {
+            this.permissionResolvers.set(task.taskId, resolve);
+            task.pendingInput = { kind: "permission", ...request };
+            if (task.state === "RUNNING") this.setState(task, "WAITING_FOR_INPUT");
+            this.journal.append("permission-request", request, task.taskId);
+          });
+        });
       }
-      if (this.shouldAbortTurn(task)) return;
-      this.setState(task, "AWAITING_REVIEW");
+      try {
+        const result = await driver.sendTurn(
+          {
+            id: session.sessionId,
+            profileId: profile.id,
+            worktreePath: task.worktreePath ?? task.projectPath,
+          },
+          { sessionId: session.sessionId, text },
+        );
+        if (this.shouldAbortTurn(task)) return;
+        task.lastStopReason = result.stopReason;
+        this.journal.append("worker-turn-finished", result, task.taskId);
+        const verifyIds = task.verification?.enabled ? task.verification.verifyIds : [];
+        if (verifyIds.length > 0) {
+          this.setState(task, "VERIFYING");
+          const verification = runVerification(task.worktreePath ?? task.projectPath, verifyIds);
+          task.lastVerification = verification;
+          this.journal.append("verification-result", verification, task.taskId);
+        }
+        if (this.shouldAbortTurn(task)) return;
+        this.setState(task, "AWAITING_REVIEW");
+      } finally {
+        if (session) driver.setPermissionHandler?.(session.sessionId, undefined);
+        this.permissionResolvers.delete(task.taskId);
+      }
     } catch (error) {
       if (this.shouldAbortTurn(task)) return;
       task.interrupted = true;
@@ -198,7 +238,7 @@ export class TaskManager {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const task = this.require(taskId);
-      if (this.settled(task)) return task;
+      if (this.waitReturned(task)) return task;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error(`wait timed out for ${taskId}`);
@@ -230,6 +270,25 @@ export class TaskManager {
     task.reviewNotes = notes;
     this.setState(task, "RUNNING");
     this.startTurn(task, notes);
+    return task;
+  }
+
+  respond(taskId: string, optionId: string, expectedStateVersion: number): TaskRecord {
+    const task = this.require(taskId);
+    this.assertVersion(task, expectedStateVersion);
+    if (task.state !== "WAITING_FOR_INPUT") throw new Error("respond requires WAITING_FOR_INPUT");
+    const resolver = this.permissionResolvers.get(taskId);
+    if (!resolver) {
+      throw new Error("no live permission waiter; Core restarted — use continue to REHYDRATE");
+    }
+    if (optionId !== "cancelled") {
+      const known = task.pendingInput?.options.some((option) => option.optionId === optionId);
+      if (!known) throw new Error(`unknown permission option ${optionId}`);
+    }
+    task.pendingInput = undefined;
+    this.setState(task, "RUNNING");
+    resolver(optionId === "cancelled" ? { outcome: "cancelled" } : { outcome: "selected", optionId });
+    this.permissionResolvers.delete(taskId);
     return task;
   }
 
@@ -282,14 +341,20 @@ export class TaskManager {
     const task = this.require(taskId);
     this.assertVersion(task, expectedStateVersion);
     task.interrupted = true;
+    const resolver = this.permissionResolvers.get(taskId);
+    resolver?.({ outcome: "cancelled" });
+    this.permissionResolvers.delete(taskId);
     const session = this.sessions.get(taskId);
     if (session) {
       const driver = this.drivers.get(session.profile.preferredRuntime);
-      await driver?.cancel({
+      const handle = {
         id: session.sessionId,
         profileId: session.profile.id,
         worktreePath: task.worktreePath ?? task.projectPath,
-      });
+      };
+      await driver?.cancel(handle).catch(() => undefined);
+      await driver?.close(handle).catch(() => undefined);
+      this.sessions.delete(taskId);
     }
     if (!["COMPLETED", "FAILED", "CANCELLED"].includes(task.state)) {
       this.setState(task, "CANCELLED");
@@ -302,7 +367,7 @@ export class TaskManager {
     const task = this.require(taskId);
     task.workerPid = workerPid;
     task.interrupted = true;
-    if (["RUNNING", "STARTING", "VERIFYING"].includes(task.state)) {
+    if (["RUNNING", "STARTING", "VERIFYING", "WAITING_FOR_INPUT"].includes(task.state)) {
       this.setState(task, "AWAITING_REVIEW");
     }
     return task;

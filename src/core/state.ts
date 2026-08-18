@@ -2,6 +2,7 @@ export type TaskState =
   | "QUEUED"
   | "STARTING"
   | "RUNNING"
+  | "WAITING_FOR_INPUT"
   | "VERIFYING"
   | "AWAITING_REVIEW"
   | "FINALIZING"
@@ -48,12 +49,19 @@ export type TaskRecord = {
   reviewNotes?: string;
   acceptanceCriteria?: { id: string; text: string }[];
   verification?: { enabled: boolean; verifyIds: string[] };
+  pendingInput?: {
+    kind: "permission";
+    sessionId: string;
+    title?: string;
+    options: { optionId: string; kind: string; name: string }[];
+  };
 };
 
 const allowed: Record<TaskState, TaskState[]> = {
   QUEUED: ["STARTING", "CANCELLED"],
   STARTING: ["RUNNING", "FAILED", "CANCELLED"],
-  RUNNING: ["VERIFYING", "AWAITING_REVIEW", "FAILED", "CANCELLED", "TASK_TIMED_OUT"],
+  RUNNING: ["WAITING_FOR_INPUT", "VERIFYING", "AWAITING_REVIEW", "FAILED", "CANCELLED", "TASK_TIMED_OUT"],
+  WAITING_FOR_INPUT: ["RUNNING", "AWAITING_REVIEW", "FAILED", "CANCELLED"],
   VERIFYING: ["AWAITING_REVIEW", "FAILED"],
   AWAITING_REVIEW: ["RUNNING", "FINALIZING", "FAILED", "CANCELLED"],
   FINALIZING: ["COMPLETED", "FAILED"],
@@ -79,6 +87,7 @@ export function needsAttention(task: TaskRecord): boolean {
   return (
     task.interrupted ||
     task.state === "AWAITING_REVIEW" ||
+    task.state === "WAITING_FOR_INPUT" ||
     task.state === "FAILED" ||
     task.state === "TASK_TIMED_OUT"
   );

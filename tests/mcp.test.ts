@@ -37,6 +37,7 @@ test("MCP and CLI share Core: run, continue, approve via structured tools", asyn
     assert.ok(listed.tools.some((tool) => tool.name === "bridge_doctor"));
     assert.ok(listed.tools.some((tool) => tool.name === "bridge_agents"));
     assert.ok(listed.tools.some((tool) => tool.name === "bridge_prune"));
+    assert.ok(listed.tools.some((tool) => tool.name === "bridge_respond"));
 
     const doctor = await client.callTool("bridge_doctor", {});
     const doctorResult = doctor.structuredContent as BridgeResult;
@@ -88,6 +89,61 @@ test("MCP and CLI share Core: run, continue, approve via structured tools", asyn
     const status = await client.callTool("bridge_status", { project: root, needsAttention: true });
     const listedTasks = status.structuredContent as BridgeResult;
     assert.equal((listedTasks.tasks ?? []).length, 0);
+  } finally {
+    client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MCP permission gate keeps the live waiter across bridge_respond", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-mcp-perm-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "README.md"), "base\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+
+  const client = new McpStdioClient();
+  try {
+    await client.initialize();
+    const run = await client.callTool("bridge_run", {
+      project: root,
+      objective: "ASK_PERMISSION\nWRITE gated.ts\nexport const n = 1;\n",
+      worker: "fake",
+      clientRequestId: "mcp-perm-1",
+      timeoutMs: 20_000,
+    });
+    const paused = run.structuredContent as BridgeResult;
+    assert.equal(run.isError, false);
+    assert.equal(paused.task?.state, "WAITING_FOR_INPUT");
+    assert.equal(paused.reviewPacket, undefined);
+    assert.ok(
+      paused.task?.pendingInput?.options.some((option) => option.optionId === "allow-once"),
+    );
+
+    const responded = await client.callTool("bridge_respond", {
+      project: root,
+      task: paused.task!.taskId,
+      stateVersion: paused.task!.stateVersion,
+      optionId: "allow-once",
+      timeoutMs: 20_000,
+    });
+    const reviewed = responded.structuredContent as BridgeResult;
+    assert.equal(responded.isError, false);
+    assert.equal(reviewed.task?.state, "AWAITING_REVIEW");
+    assert.ok(
+      reviewed.reviewPacket?.changedFiles.some(
+        (file) => file.path.replaceAll("\\", "/") === "gated.ts",
+      ),
+    );
+
+    const cancelled = await client.callTool("bridge_cancel", {
+      project: root,
+      task: reviewed.task!.taskId,
+      stateVersion: reviewed.task!.stateVersion,
+    });
+    assert.equal((cancelled.structuredContent as BridgeResult).task?.state, "CANCELLED");
   } finally {
     client.close();
     rmSync(root, { recursive: true, force: true });

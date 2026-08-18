@@ -19,18 +19,23 @@ const tools = [
   {
     name: "bridge_run",
     description:
-      "Start an Agent Bridge task, wait until AWAITING_REVIEW, and return the task plus ReviewPacket. Does not complete the task.",
+      "Start an Agent Bridge task and wait until WAITING_FOR_INPUT or AWAITING_REVIEW. WAITING_FOR_INPUT is not completion — call bridge_respond. AWAITING_REVIEW is also not completion.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Git repo path" },
         objective: { type: "string" },
-        worker: { type: "string", description: "replay | claude | deepseek" },
+        worker: { type: "string", description: "replay | claude | deepseek | fake" },
         clientRequestId: { type: "string" },
         inPlace: { type: "boolean" },
         verifyIds: { type: "array", items: { type: "string" } },
         files: { type: "object", additionalProperties: { type: "string" } },
         timeoutMs: { type: "number", description: "Wait budget in ms. Default 900000." },
+        permissionMode: {
+          type: "string",
+          enum: ["auto", "gate"],
+          description: "auto selects allow_once. gate pauses at WAITING_FOR_INPUT for bridge_respond. MCP default is gate.",
+        },
       },
       required: ["project", "objective"],
       additionalProperties: false,
@@ -47,7 +52,7 @@ const tools = [
         needsAttention: {
           type: "boolean",
           description:
-            "If true, only return tasks that still need a Supervisor decision: AWAITING_REVIEW, FAILED, TASK_TIMED_OUT, or interrupted in-flight. CANCELLED and COMPLETED are excluded even if interrupted.",
+            "If true, only return tasks that still need a Supervisor decision: AWAITING_REVIEW, WAITING_FOR_INPUT, FAILED, TASK_TIMED_OUT, or interrupted in-flight. CANCELLED and COMPLETED are excluded even if interrupted.",
         },
       },
       required: ["project"],
@@ -56,7 +61,7 @@ const tools = [
   },
   {
     name: "bridge_wait",
-    description: "Wait until a task reaches a terminal or review state.",
+    description: "Wait until a task reaches WAITING_FOR_INPUT, AWAITING_REVIEW, or a terminal state.",
     inputSchema: {
       type: "object",
       properties: {
@@ -101,8 +106,26 @@ const tools = [
         files: { type: "object", additionalProperties: { type: "string" } },
         worker: { type: "string" },
         timeoutMs: { type: "number" },
+        permissionMode: { type: "string", enum: ["auto", "gate"] },
       },
       required: ["project", "task", "notes", "stateVersion"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "bridge_respond",
+    description:
+      "Answer a WAITING_FOR_INPUT permission prompt. Pass optionId from task.pendingInput.options, or cancelled. Requires expectedStateVersion. Then waits until the next prompt or AWAITING_REVIEW.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string" },
+        task: { type: "string" },
+        stateVersion: { type: "number" },
+        optionId: { type: "string", description: "Permission optionId, or cancelled" },
+        timeoutMs: { type: "number" },
+      },
+      required: ["project", "task", "stateVersion", "optionId"],
       additionalProperties: false,
     },
   },
@@ -255,6 +278,8 @@ function toRequest(name: string, args: Record<string, unknown> = {}): BridgeRequ
         : undefined,
     timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
     needsAttention: args.needsAttention === true,
+    permissionMode: args.permissionMode === "auto" ? "auto" : "gate",
+    optionId: typeof args.optionId === "string" ? args.optionId : undefined,
   };
 }
 

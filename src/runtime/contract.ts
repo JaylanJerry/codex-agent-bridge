@@ -15,9 +15,34 @@ export type WorkerProfile = {
   };
 };
 
-export type StartOptions = {
-  resumeSessionId?: string;
+export type PermissionOption = {
+  optionId: string;
+  kind: string;
+  name: string;
 };
+
+export type PermissionRequest = {
+  sessionId: string;
+  title?: string;
+  options: PermissionOption[];
+};
+
+export type PermissionOutcome =
+  | { outcome: "selected"; optionId: string }
+  | { outcome: "cancelled" };
+
+export type PermissionHandler = (request: PermissionRequest) => Promise<PermissionOutcome>;
+
+export type PermissionMode = "auto" | "gate";
+
+export function autoSelectPermission(options: PermissionOption[]): PermissionOutcome {
+  const selected =
+    options.find((option) => option.kind === "allow_once") ??
+    options.find((option) => option.optionId.includes("allow")) ??
+    options[0];
+  if (!selected) return { outcome: "cancelled" };
+  return { outcome: "selected", optionId: selected.optionId };
+}
 
 export type TurnInput = {
   sessionId: string;
@@ -47,4 +72,5 @@ export interface RuntimeDriver {
   sendTurn(session: RuntimeSession, input: TurnInput): Promise<{ stopReason: string }>;
   cancel(session: RuntimeSession): Promise<void>;
   close(session: RuntimeSession): Promise<void>;
+  setPermissionHandler?(sessionId: string, handler: PermissionHandler | undefined): void;
 }

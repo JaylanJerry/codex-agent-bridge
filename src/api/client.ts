@@ -11,11 +11,12 @@ import { listAgents, runDoctor, type AgentInfo, type DoctorCheck } from "../core
 import {
   claudeProfile,
   deepSeekProfile,
+  fakeAcpProfile,
   replayProfile,
   resolveClaudeLaunch,
   resolveDeepSeekLaunch,
 } from "../workers/profiles.ts";
-import type { RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
+import type { PermissionMode, RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
 import type { BridgeTaskInput, TaskRecord } from "../core/state.ts";
 import type { ReviewPacket } from "../review/packet.ts";
 
@@ -52,6 +53,8 @@ export type BridgeRequest = {
   files?: Record<string, string>;
   timeoutMs?: number;
   needsAttention?: boolean;
+  permissionMode?: PermissionMode;
+  optionId?: string;
 };
 
 function required(value: string | undefined, name: string): string {
@@ -76,11 +79,48 @@ function fail(error: unknown): BridgeResult {
   return { ok: false, error: err.message, code };
 }
 
-function createManager(
+type CoreSlot = {
+  manager: TaskManager;
+  store: FileTaskStore;
+  drivers: Map<string, RuntimeDriver>;
+  profiles: Map<string, WorkerProfile>;
+};
+
+const cores = new Map<string, CoreSlot>();
+
+function coreKey(projectPath: string): string {
+  return resolve(projectPath).replaceAll("\\", "/").toLowerCase();
+}
+
+function ensureWorker(slot: CoreSlot, workerId: string): void {
+  if (workerId === "claude" && !slot.profiles.has("claude")) {
+    if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
+    slot.profiles.set("claude", claudeProfile(resolveClaudeLaunch(repoRoot)));
+  }
+  if (workerId === "deepseek" && !slot.profiles.has("deepseek")) {
+    if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
+    slot.profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
+  }
+  if (workerId === "fake" && !slot.profiles.has("fake")) {
+    if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
+    slot.profiles.set("fake", fakeAcpProfile(repoRoot));
+  }
+}
+
+function getCore(
   projectPath: string,
   replayTurn: ReplayTurn | undefined,
   extraWorkers: string[],
-): { manager: TaskManager; store: FileTaskStore } {
+): CoreSlot {
+  const key = coreKey(projectPath);
+  const existing = cores.get(key);
+  if (existing) {
+    existing.drivers.set("replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : []));
+    existing.manager.invalidateRuntimeSessions("replay");
+    for (const workerId of extraWorkers) ensureWorker(existing, workerId);
+    return existing;
+  }
+
   const dir = dataDirFor(projectPath);
   const store = new FileTaskStore(join(dir, "tasks.json"));
   const snapshot = store.load();
@@ -89,13 +129,11 @@ function createManager(
     ...extraWorkers,
     ...snapshot.tasks.map((task) => task.workerId),
   ]);
-
   const drivers = new Map<string, RuntimeDriver>([
     ["replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : [])],
   ]);
   const profiles = new Map<string, WorkerProfile>([["replay", replayProfile]]);
-
-  if ([...workerIds].some((id) => id === "claude" || id === "deepseek")) {
+  if ([...workerIds].some((id) => id === "claude" || id === "deepseek" || id === "fake")) {
     drivers.set("acp", new AcpRuntimeDriver());
   }
   if (workerIds.has("claude")) {
@@ -104,10 +142,14 @@ function createManager(
   if (workerIds.has("deepseek")) {
     profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
   }
-
+  if (workerIds.has("fake")) {
+    profiles.set("fake", fakeAcpProfile(repoRoot));
+  }
   const manager = new TaskManager(drivers, profiles, new Journal(join(dir, "journal.ndjson")));
   manager.hydrate(snapshot);
-  return { manager, store };
+  const slot = { manager, store, drivers, profiles };
+  cores.set(key, slot);
+  return slot;
 }
 
 export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
@@ -115,7 +157,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
     return {
       ok: true,
       usage:
-        "agent-bridge run|status|wait|review-packet|diff|approve|continue|reject|cancel|apply|logs|doctor|agents|version|prune",
+        "agent-bridge run|status|wait|review-packet|diff|approve|continue|respond|reject|cancel|apply|logs|doctor|agents|version|prune",
     };
   }
 
@@ -142,8 +184,20 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
     };
     const extraWorkers = request.worker ? [request.worker] : [];
     const timeoutMs = request.timeoutMs ?? 900_000;
-    const { manager, store } = createManager(projectPath, replayTurn, extraWorkers);
+    const { manager, store } = getCore(projectPath, replayTurn, extraWorkers);
+    manager.setPermissionMode(request.permissionMode ?? "auto");
     const persist = () => store.save(manager.snapshot());
+
+    const finish = async (taskId: string) => {
+      const waited = await manager.wait(taskId, timeoutMs);
+      if (waited.state === "AWAITING_REVIEW") {
+        const reviewPacket = manager.reviewPacket(taskId);
+        persist();
+        return { ok: true as const, task: waited, reviewPacket };
+      }
+      persist();
+      return { ok: true as const, task: waited };
+    };
 
     if (request.command === "run") {
       const input: BridgeTaskInput = {
@@ -159,10 +213,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
             : undefined,
       };
       const created = manager.run(input);
-      const waited = await manager.wait(created.taskId, timeoutMs);
-      const reviewPacket = manager.reviewPacket(waited.taskId);
-      persist();
-      return { ok: true, task: waited, reviewPacket };
+      return finish(created.taskId);
     }
 
     if (request.command === "status") {
@@ -170,9 +221,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       return { ok: true, tasks: manager.list({ needsAttention: request.needsAttention }) };
     }
     if (request.command === "wait") {
-      const waited = await manager.wait(required(request.task, "task"), timeoutMs);
-      persist();
-      return { ok: true, task: waited };
+      return finish(required(request.task, "task"));
     }
     if (request.command === "review-packet") {
       const taskId = required(request.task, "task");
@@ -194,10 +243,16 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
         required(request.notes, "notes"),
         Number(request.stateVersion),
       );
-      const waited = await manager.wait(updated.taskId, timeoutMs);
-      const reviewPacket = manager.reviewPacket(waited.taskId);
+      return finish(updated.taskId);
+    }
+    if (request.command === "respond") {
+      const updated = manager.respond(
+        required(request.task, "task"),
+        required(request.optionId, "optionId"),
+        Number(request.stateVersion),
+      );
       persist();
-      return { ok: true, task: waited, reviewPacket };
+      return finish(updated.taskId);
     }
     if (request.command === "reject") {
       const updated = manager.reject(required(request.task, "task"), Number(request.stateVersion));

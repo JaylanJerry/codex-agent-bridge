@@ -18,7 +18,7 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
 );
 
-const connection = new acp.AgentSideConnection(() => {
+const connection = new acp.AgentSideConnection((conn) => {
   return {
     async initialize(params) {
       return {
@@ -51,6 +51,20 @@ const connection = new acp.AgentSideConnection(() => {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
         return { stopReason: "end_turn" as const };
+      }
+      if (text.includes("ASK_PERMISSION")) {
+        const permission = await conn.requestPermission({
+          sessionId: params.sessionId,
+          toolCall: { toolCallId: "write-1", title: "Write file", kind: "edit" },
+          options: [
+            { optionId: "allow-once", kind: "allow_once", name: "Allow once" },
+            { optionId: "reject-once", kind: "reject_once", name: "Reject once" },
+          ],
+        });
+        const allowed =
+          permission.outcome.outcome === "selected" &&
+          permission.outcome.optionId === "allow-once";
+        if (!allowed) return { stopReason: "end_turn" as const };
       }
       const writeMatch = text.match(/^WRITE\s+(\S+)\n([\s\S]*)$/m);
       if (writeMatch) {

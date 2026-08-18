@@ -30,7 +30,7 @@ test("needs-attention covers review, failure, timeout, and interrupted", () => {
     projectPath: "/tmp",
     workerId: "replay",
   } as const;
-  assert.equal(needsAttention({ ...base, state: "AWAITING_REVIEW" }), true);
+  assert.equal(needsAttention({ ...base, state: "WAITING_FOR_INPUT" }), true);
   assert.equal(needsAttention({ ...base, state: "FAILED" }), true);
   assert.equal(needsAttention({ ...base, state: "TASK_TIMED_OUT" }), true);
   assert.equal(needsAttention({ ...base, state: "RUNNING", interrupted: true }), true);
