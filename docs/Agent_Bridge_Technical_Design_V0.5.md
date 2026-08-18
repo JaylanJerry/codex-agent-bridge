@@ -51,15 +51,16 @@ logs
 doctor
 agents
 version
+prune
 ```
 
 未实现（Phase 2 其余项）：`respond`、SQLite、loopback HTTP daemon、EffectivePermission 人工闸、Session TTL / stall daemon。
 
-MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_apply` / `bridge_logs` / `bridge_doctor` / `bridge_agents` / `bridge_version`），走 `src/api/client.ts`。
+MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_apply` / `bridge_logs` / `bridge_doctor` / `bridge_agents` / `bridge_version` / `bridge_prune`），走 `src/api/client.ts`。
 
 `status --needs-attention` / `bridge_status.needsAttention` 只返回仍需 Supervisor 处理的任务：`AWAITING_REVIEW`、`FAILED`、`TASK_TIMED_OUT`，或非终态的 `interrupted`。`CANCELLED` / `COMPLETED` 即使带了 `interrupted` 也不列入。
 
-`doctor` 检查 git / Node / Job Object / Worker 适配器 / **凭证是否存在（不打印值）** / Codex MCP 注册；若给了 `project`，再检查 `verify.json` 和遗留 `agent-bridge/` worktree。
+`doctor` 检查 git / Node / Job Object / Worker 适配器 / **凭证是否存在（不打印值）** / Codex MCP 注册；若给了 `project`，再检查 `verify.json` 和遗留 `agent-bridge/` worktree。终态任务占用的 worktree 也算遗留。`prune` / `bridge_prune` 拆掉这些 worktree，保留任务分支。
 
 `continue` 在 Core 重启后会把持久化的 `sessionId` 传给 Runtime：Claude 走 `session/load`，失败则 `session/new` + REHYDRATE。DeepSeek 无 load，直接 REHYDRATE。Journal 写入前脱敏。
 
@@ -152,11 +153,11 @@ npm test
 
 ## 6. 下一步（Phase 2 剩余）
 
-已落地本轮：`doctor` / `agents` / `version`、`tasks --needs-attention`、journal redaction、Core 把 Claude `session/load` 接到 hydrate 后的 continue。
+已落地本轮：`doctor` / `agents` / `version`、`tasks --needs-attention`、journal redaction、Claude `session/load`、`prune` 清理遗留 worktree。
 
 仍未做：
 
 1. `respond` / interactive question / permission 人工闸
 2. loopback HTTP Core daemon + SQLite
-3. Session TTL / stall 检测 / worktree retention 自动清理
-4. 把 `.agent-bridge/verify.json` 编进用户测试仓库（模板在 `templates/verify.json`）
+3. Session TTL / stall 检测
+4. 把 `.agent-bridge/verify.json` 编进用户测试仓库（模板在 `templates/verify.json`；测试夹已自建）

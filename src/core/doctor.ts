@@ -5,7 +5,8 @@ import { spawnSync } from "node:child_process";
 import { claudeAdapterPath, deepSeekHarnessRoot } from "../workers/profiles.ts";
 import { hasDeepseekApiKey } from "../workers/credentials.ts";
 import { createKillOnCloseJob } from "../process/job-object.ts";
-import type { TaskRecord } from "./state.ts";
+import { isTerminalState, type TaskRecord } from "./state.ts";
+import { listAgentBridgeWorktrees, worktreeKey } from "../workspace/worktree.ts";
 
 export type DoctorCheck = {
   id: string;
@@ -83,38 +84,24 @@ function mcpRegistered(): DoctorCheck {
   };
 }
 
-function loadTaskWorktrees(projectPath: string): Set<string> {
+function loadTasks(projectPath: string): TaskRecord[] {
   const path = join(projectPath, ".agent-bridge-data", "tasks.json");
-  if (!existsSync(path)) return new Set();
+  if (!existsSync(path)) return [];
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as { tasks?: TaskRecord[] };
-    return new Set(
-      (parsed.tasks ?? [])
-        .map((task) => task.worktreePath)
-        .filter((value): value is string => Boolean(value))
-        .map((value) => value.replaceAll("\\", "/")),
-    );
+    return parsed.tasks ?? [];
   } catch {
-    return new Set();
+    return [];
   }
 }
 
-function listOrphanWorktrees(projectPath: string): string[] {
-  const proc = spawnSync("git", ["-c", "core.longpaths=true", "worktree", "list", "--porcelain"], {
-    cwd: projectPath,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (proc.status !== 0) return [];
-  const live = loadTaskWorktrees(projectPath);
-  const orphans: string[] = [];
-  for (const line of proc.stdout.split(/\r?\n/)) {
-    if (!line.startsWith("worktree ")) continue;
-    const path = line.slice("worktree ".length);
-    if (!/[\\/]agent-bridge[\\/]/i.test(path)) continue;
-    if (!live.has(path.replaceAll("\\", "/"))) orphans.push(path);
-  }
-  return orphans;
+export function listOrphanWorktrees(projectPath: string): string[] {
+  const protectedKeys = new Set(
+    loadTasks(projectPath)
+      .filter((task) => !isTerminalState(task.state) && task.worktreePath)
+      .map((task) => worktreeKey(task.worktreePath!)),
+  );
+  return listAgentBridgeWorktrees(projectPath).filter((path) => !protectedKeys.has(worktreeKey(path)));
 }
 
 export function listAgents(repoRoot: string): AgentInfo[] {

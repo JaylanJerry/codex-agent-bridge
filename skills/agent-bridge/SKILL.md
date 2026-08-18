@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: Delegate implementation to an external coding agent through Agent Bridge. Use when Codex should supervise Claude Code or DeepSeek Harness instead of editing the target repo itself. Covers bridge_run, continue, approve, apply, reject, cancel, doctor, agents.
+description: Delegate implementation to an external coding agent through Agent Bridge. Use when Codex should supervise Claude Code or DeepSeek Harness instead of editing the target repo itself. Covers bridge_run, continue, approve, apply, reject, cancel, doctor, agents, prune.
 ---
 
 # Agent Bridge
@@ -41,7 +41,7 @@ bridge_run
 
 `clientRequestId` 相同且内容相同会返回同一 task；内容不同会 `TASK_ALREADY_EXISTS`。
 
-掉线后先 `bridge_status`（`needsAttention: true`）或 `bridge_doctor`。
+掉线后先 `bridge_status`（`needsAttention: true`）或 `bridge_doctor`。`doctor` 标出遗留 worktree 时用 `bridge_prune` 拆掉；不会删任务分支或 checkpoint，也不会动进行中的任务。
 
 ## 硬规则
 

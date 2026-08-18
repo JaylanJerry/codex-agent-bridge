@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 function git(cwd: string, args: string[]): string {
@@ -75,4 +75,31 @@ export function cherryPickToRepo(repoPath: string, commit: string): string {
 
 export function repoHead(repoPath: string): string {
   return git(resolve(repoPath), ["rev-parse", "HEAD"]);
+}
+
+export function worktreeKey(path: string): string {
+  const normalized = resolve(path).replaceAll("\\", "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export function listAgentBridgeWorktrees(repoPath: string): string[] {
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "worktree", "list", "--porcelain"], {
+    cwd: resolve(repoPath),
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) return [];
+  const paths: string[] = [];
+  for (const line of proc.stdout.split(/\r?\n/)) {
+    if (!line.startsWith("worktree ")) continue;
+    const path = line.slice("worktree ".length);
+    if (/[\\/]agent-bridge[\\/]/i.test(path)) paths.push(path);
+  }
+  return paths;
+}
+
+export function removeEmptyAgentBridgeDir(repoPath: string): void {
+  const dir = join(resolve(repoPath), "agent-bridge");
+  if (!existsSync(dir)) return;
+  if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
 }

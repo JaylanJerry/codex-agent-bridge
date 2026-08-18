@@ -8,6 +8,7 @@ import { Journal } from "../src/persistence/journal.ts";
 import { ReplayRuntimeDriver } from "../src/runtime/replay/driver.ts";
 import { TaskManager, StateVersionConflictError } from "../src/core/task-manager.ts";
 import { replayProfile } from "../src/workers/profiles.ts";
+import { createTaskWorktree } from "../src/workspace/worktree.ts";
 import type { RuntimeDriver, RuntimeSession, StartOptions, TurnInput, WorkerProfile } from "../src/runtime/contract.ts";
 
 function git(cwd: string, args: string[]) {
@@ -320,5 +321,45 @@ test("hydrate continue passes persisted sessionId into driver.start", async () =
   assert.equal(starts.at(-1)?.resumeSessionId, first.sessionId);
   assert.equal(second.sessionId, first.sessionId);
   assert.equal(second.sessionResumed, true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("prune removes leftover worktrees but keeps in-flight ones and task branches", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-prune-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  const manager = new TaskManager(
+    new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } }])]]),
+    new Map([["replay", replayProfile]]),
+    new Journal(join(root, "journal.ndjson")),
+  );
+  const created = manager.run({
+    schemaVersion: "1.2",
+    clientRequestId: "prune-1",
+    objective: "bump",
+    projectPath: root,
+    workerId: "replay",
+  });
+  const first = await manager.wait(created.taskId);
+  const livePath = first.worktreePath!;
+  const stale = createTaskWorktree(root, "stale-orphan");
+  const firstPrune = manager.pruneWorktrees(root);
+  assert.equal(existsSync(livePath), true);
+  assert.equal(existsSync(stale.worktreePath), false);
+  assert.ok(firstPrune.removed.some((path) => path.replaceAll("\\", "/").includes("stale-orphan")));
+  git(root, ["rev-parse", stale.taskBranch]);
+  manager.reviewPacket(first.taskId);
+  manager.approve(first.taskId, first.stateVersion);
+  const leftover = createTaskWorktree(root, "stale-completed");
+  manager.get(created.taskId).worktreePath = leftover.worktreePath;
+  const secondPrune = manager.pruneWorktrees(root);
+  assert.equal(existsSync(leftover.worktreePath), false);
+  assert.equal(manager.get(created.taskId).worktreePath, undefined);
+  assert.ok(secondPrune.removed.length > 0);
+  git(root, ["rev-parse", leftover.taskBranch]);
   rmSync(root, { recursive: true, force: true });
 });

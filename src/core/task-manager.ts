@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { needsAttention, transition, type BridgeTaskInput, type TaskRecord } from "./state.ts";
+import { isTerminalState, needsAttention, transition, type BridgeTaskInput, type TaskRecord } from "./state.ts";
 import { Journal } from "../persistence/journal.ts";
 import type { TaskSnapshot } from "../persistence/store.ts";
 import {
   checkpointCommit,
   cherryPickToRepo,
   createTaskWorktree,
+  listAgentBridgeWorktrees,
+  removeEmptyAgentBridgeDir,
   removeTaskWorktree,
   repoHead,
+  worktreeKey,
   type WorktreeHandle,
 } from "../workspace/worktree.ts";
 import { changeSetHash, collectChanges, worktreeDiff } from "../workspace/changes.ts";
@@ -317,6 +320,41 @@ export class TaskManager {
     const tasks = [...this.tasks.values()];
     if (filter?.needsAttention) return tasks.filter(needsAttention);
     return tasks;
+  }
+
+  pruneWorktrees(projectPath: string): { removed: string[] } {
+    const protectedKeys = new Set(
+      [...this.tasks.values()]
+        .filter((task) => !isTerminalState(task.state) && task.worktreePath)
+        .map((task) => worktreeKey(task.worktreePath!)),
+    );
+    const removed: string[] = [];
+    const seen = new Set<string>();
+    const candidates = [
+      ...listAgentBridgeWorktrees(projectPath),
+      ...[...this.tasks.values()]
+        .map((task) => task.worktreePath)
+        .filter((path): path is string => Boolean(path) && path !== projectPath),
+    ];
+    for (const path of candidates) {
+      const key = worktreeKey(path);
+      if (protectedKeys.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      try {
+        removeTaskWorktree({ repoPath: projectPath, worktreePath: path });
+        removed.push(path);
+      } catch (error) {
+        this.journal.append("worktree-cleanup-failed", { error: String(error), path });
+      }
+    }
+    for (const task of this.tasks.values()) {
+      if (!task.worktreePath || task.worktreePath === task.projectPath) continue;
+      if (protectedKeys.has(worktreeKey(task.worktreePath))) continue;
+      task.worktreePath = undefined;
+    }
+    this.journal.append("prune-worktrees", { removed });
+    removeEmptyAgentBridgeDir(projectPath);
+    return { removed };
   }
 
   private cleanupWorktree(task: TaskRecord): void {

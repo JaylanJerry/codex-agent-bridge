@@ -36,6 +36,7 @@ test("MCP and CLI share Core: run, continue, approve via structured tools", asyn
     assert.ok(listed.tools.some((tool) => tool.name === "bridge_apply"));
     assert.ok(listed.tools.some((tool) => tool.name === "bridge_doctor"));
     assert.ok(listed.tools.some((tool) => tool.name === "bridge_agents"));
+    assert.ok(listed.tools.some((tool) => tool.name === "bridge_prune"));
 
     const doctor = await client.callTool("bridge_doctor", {});
     const doctorResult = doctor.structuredContent as BridgeResult;

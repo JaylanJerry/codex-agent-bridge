@@ -35,6 +35,7 @@ export type BridgeResult = {
   version?: string;
   checks?: DoctorCheck[];
   agents?: AgentInfo[];
+  removed?: string[];
 };
 
 export type BridgeRequest = {
@@ -114,7 +115,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
     return {
       ok: true,
       usage:
-        "agent-bridge run|status|wait|review-packet|diff|approve|continue|reject|cancel|apply|logs|doctor|agents|version",
+        "agent-bridge run|status|wait|review-packet|diff|approve|continue|reject|cancel|apply|logs|doctor|agents|version|prune",
     };
   }
 
@@ -212,6 +213,11 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       const updated = manager.apply(required(request.task, "task"), Number(request.stateVersion));
       persist();
       return { ok: true, task: updated, head: updated.appliedHead };
+    }
+    if (request.command === "prune") {
+      const result = manager.pruneWorktrees(projectPath);
+      persist();
+      return { ok: true, removed: result.removed };
     }
     if (request.command === "logs") {
       const raw = readFileSync(join(dataDirFor(projectPath), "journal.ndjson"), "utf8");

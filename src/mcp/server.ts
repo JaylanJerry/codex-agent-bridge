@@ -174,6 +174,17 @@ const tools = [
     },
   },
   {
+    name: "bridge_prune",
+    description:
+      "Remove leftover agent-bridge git worktrees that are not owned by an in-flight task. Does not delete task branches or checkpoints. Never touches AWAITING_REVIEW / RUNNING worktrees.",
+    inputSchema: {
+      type: "object",
+      properties: { project: { type: "string" } },
+      required: ["project"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "bridge_doctor",
     description:
       "Check git, Node, Job Object, worker adapters, credential presence (not values), Codex MCP registration, and optional orphan worktrees.",

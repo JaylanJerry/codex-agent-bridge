@@ -70,6 +70,10 @@ export function transition(current: TaskState, next: TaskState): TaskState {
   return next;
 }
 
+export function isTerminalState(state: TaskState): boolean {
+  return state === "COMPLETED" || state === "FAILED" || state === "CANCELLED" || state === "TASK_TIMED_OUT";
+}
+
 export function needsAttention(task: TaskRecord): boolean {
   if (task.state === "CANCELLED" || task.state === "COMPLETED") return false;
   return (
