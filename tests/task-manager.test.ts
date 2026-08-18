@@ -177,6 +177,7 @@ test("cancel marks task cancelled without waiting for worker", async () => {
   assert.equal(cancelled.state, "CANCELLED");
   await manager.drain(created.taskId);
   assert.equal(manager.get(created.taskId).state, "CANCELLED");
+  assert.equal(manager.list({ needsAttention: true }).length, 0);
   rmSync(root, { recursive: true, force: true });
 });
 

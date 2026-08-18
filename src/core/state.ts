@@ -71,6 +71,7 @@ export function transition(current: TaskState, next: TaskState): TaskState {
 }
 
 export function needsAttention(task: TaskRecord): boolean {
+  if (task.state === "CANCELLED" || task.state === "COMPLETED") return false;
   return (
     task.interrupted ||
     task.state === "AWAITING_REVIEW" ||

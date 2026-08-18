@@ -46,7 +46,8 @@ const tools = [
         task: { type: "string" },
         needsAttention: {
           type: "boolean",
-          description: "If true, only return AWAITING_REVIEW, FAILED, TASK_TIMED_OUT, or interrupted tasks.",
+          description:
+            "If true, only return tasks that still need a Supervisor decision: AWAITING_REVIEW, FAILED, TASK_TIMED_OUT, or interrupted in-flight. CANCELLED and COMPLETED are excluded even if interrupted.",
         },
       },
       required: ["project"],

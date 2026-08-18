@@ -57,7 +57,7 @@ version
 
 MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_apply` / `bridge_logs` / `bridge_doctor` / `bridge_agents` / `bridge_version`），走 `src/api/client.ts`。
 
-`status --needs-attention` / `bridge_status.needsAttention` 只返回 `AWAITING_REVIEW`、`FAILED`、`TASK_TIMED_OUT` 或 `interrupted` 的任务。
+`status --needs-attention` / `bridge_status.needsAttention` 只返回仍需 Supervisor 处理的任务：`AWAITING_REVIEW`、`FAILED`、`TASK_TIMED_OUT`，或非终态的 `interrupted`。`CANCELLED` / `COMPLETED` 即使带了 `interrupted` 也不列入。
 
 `doctor` 检查 git / Node / Job Object / Worker 适配器 / **凭证是否存在（不打印值）** / Codex MCP 注册；若给了 `project`，再检查 `verify.json` 和遗留 `agent-bridge/` worktree。
 

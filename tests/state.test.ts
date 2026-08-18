@@ -36,4 +36,6 @@ test("needs-attention covers review, failure, timeout, and interrupted", () => {
   assert.equal(needsAttention({ ...base, state: "RUNNING", interrupted: true }), true);
   assert.equal(needsAttention({ ...base, state: "COMPLETED" }), false);
   assert.equal(needsAttention({ ...base, state: "CANCELLED" }), false);
+  assert.equal(needsAttention({ ...base, state: "CANCELLED", interrupted: true }), false);
+  assert.equal(needsAttention({ ...base, state: "COMPLETED", interrupted: true }), false);
 });
