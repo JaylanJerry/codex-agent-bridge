@@ -1,8 +1,9 @@
 # Agent Bridge 最终开发指导
 
 **版本：** 2026-08-19 / Final Guidance  
-**建议文档基线：** `Agent_Bridge_Technical_Design_V0.5.md`（架构决策见 V0.4）  
-**产品方向：** `docs/decisions/ADR-001-post-mvp-direction.md` — **Accepted，路线 B**（MCP stdio V1；HTTP/SQLite/GUI/EXE 推迟至 ADR-002）。可分发 V1 的 P0 门在该 ADR 的 Release Gates。
+**产品方向：** `docs/PRODUCT_GUIDE.md`（现行后续路线）  
+**裁决：** `docs/decisions/ADR-001-post-mvp-direction.md` — **Accepted，路线 B**  
+**实现接口：** `Agent_Bridge_Technical_Design_V0.5.md`（架构思想见 V0.4，不要当 backlog）
 
 ---
 
@@ -168,12 +169,13 @@ turn结束
 
 ## 7. 文档阅读顺序
 
-1. `00_START_HERE.md`
-2. `Agent_Bridge_Technical_Design_V0.5.md`
-3. `Agent_Bridge_Technical_Design_V0.4.md`
-4. `phase0-findings.md`
-5. `capability-matrix.md`
-6. `IMPLEMENTATION_ROADMAP.md`
+1. `PRODUCT_GUIDE.md` — **现行产品路线（从这里做）**
+2. `decisions/ADR-001-post-mvp-direction.md` — 为何是 MCP stdio V1
+3. `Agent_Bridge_Technical_Design_V0.5.md` — 已实现接口
+4. `CODEX_SKILL.md` — Codex 接入
+5. `Agent_Bridge_Technical_Design_V0.4.md` — 架构思想（历史）
+6. `phase0-findings.md` / `capability-matrix.md` — Phase 0 证据
+7. `IMPLEMENTATION_ROADMAP.md` — 旧阶段表（历史，勿当 sprint）
 
 ---
 

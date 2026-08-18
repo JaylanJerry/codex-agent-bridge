@@ -1,5 +1,7 @@
 # Agent Bridge 实施路线图
 
+**状态：历史文档。** 2026-08-19 起后续工作以 `docs/PRODUCT_GUIDE.md` 与 ADR-001（Accepted / 路线 B）为准。下文 Phase 2 的 SQLite/HTTP、Phase 5 的 GUI/EXE **不是**当前 backlog。
+
 ---
 
 ## 1. 主仓库

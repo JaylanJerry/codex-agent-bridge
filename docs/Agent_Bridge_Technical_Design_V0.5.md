@@ -1,11 +1,12 @@
 # Agent Bridge 技术设计 V0.5
 
-**状态：** Implementation Frozen Baseline  
-**日期：** 2026-08-18  
-**上级文档：** `Agent_Bridge_Technical_Design_V0.4.md`（架构决策仍有效）  
+**状态：** Implementation Frozen Baseline（接口）+ ADR-001 产品方向  
+**日期：** 2026-08-19  
+**上级文档：** `Agent_Bridge_Technical_Design_V0.4.md`（架构思想仍有效，不当 backlog）  
+**现行路线：** `docs/PRODUCT_GUIDE.md`  
 **仓库：** `C:\Users\jjbon\Documents\Codex\Agent Relay`
 
-V0.4 仍是架构基线。V0.5 冻结 **Phase 0 实测结论** 和 **Phase 1 已实现接口**。实现以本文件与 `src/` 为准；与 V0.4 草稿冲突时，以本文件为准。
+V0.4 仍是架构思想来源。V0.5 冻结 **Phase 0 实测结论** 和 **已实现接口**。实现以本文件与 `src/` 为准。**产品后续路线以 `PRODUCT_GUIDE.md` 与 ADR-001 为准**；与 V0.4 愿望清单冲突时不要按 HTTP/SQLite/GUI 开工。
 
 ---
 
