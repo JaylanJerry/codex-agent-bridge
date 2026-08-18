@@ -173,7 +173,7 @@ export class TaskManager {
     }
   }
 
-  async wait(taskId: string, timeoutMs = 30_000): Promise<TaskRecord> {
+  async wait(taskId: string, timeoutMs = 900_000): Promise<TaskRecord> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const task = this.require(taskId);

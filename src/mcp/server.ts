@@ -30,6 +30,7 @@ const tools = [
         inPlace: { type: "boolean" },
         verifyIds: { type: "array", items: { type: "string" } },
         files: { type: "object", additionalProperties: { type: "string" } },
+        timeoutMs: { type: "number", description: "Wait budget in ms. Default 900000." },
       },
       required: ["project", "objective"],
       additionalProperties: false,
@@ -53,7 +54,11 @@ const tools = [
     description: "Wait until a task reaches a terminal or review state.",
     inputSchema: {
       type: "object",
-      properties: { project: { type: "string" }, task: { type: "string" } },
+      properties: {
+        project: { type: "string" },
+        task: { type: "string" },
+        timeoutMs: { type: "number" },
+      },
       required: ["project", "task"],
       additionalProperties: false,
     },
@@ -90,6 +95,7 @@ const tools = [
         stateVersion: { type: "number" },
         files: { type: "object", additionalProperties: { type: "string" } },
         worker: { type: "string" },
+        timeoutMs: { type: "number" },
       },
       required: ["project", "task", "notes", "stateVersion"],
       additionalProperties: false,
@@ -186,6 +192,7 @@ function toRequest(name: string, args: Record<string, unknown> = {}): BridgeRequ
       args.files && typeof args.files === "object"
         ? Object.fromEntries(Object.entries(args.files as Record<string, unknown>).map(([key, value]) => [key, String(value)]))
         : undefined,
+    timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
   };
 }
 

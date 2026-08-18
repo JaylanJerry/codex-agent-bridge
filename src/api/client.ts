@@ -43,6 +43,7 @@ export type BridgeRequest = {
   inPlace?: boolean;
   verifyIds?: string[];
   files?: Record<string, string>;
+  timeoutMs?: number;
 };
 
 function required(value: string | undefined, name: string): string {
@@ -116,6 +117,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       files: request.files ?? {},
     };
     const extraWorkers = request.worker ? [request.worker] : [];
+    const timeoutMs = request.timeoutMs ?? 900_000;
     const { manager, store } = createManager(projectPath, replayTurn, extraWorkers);
     const persist = () => store.save(manager.snapshot());
 
@@ -133,7 +135,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
             : undefined,
       };
       const created = manager.run(input);
-      const waited = await manager.wait(created.taskId);
+      const waited = await manager.wait(created.taskId, timeoutMs);
       const reviewPacket = manager.reviewPacket(waited.taskId);
       persist();
       return { ok: true, task: waited, reviewPacket };
@@ -144,7 +146,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       return { ok: true, tasks: manager.list() };
     }
     if (request.command === "wait") {
-      const waited = await manager.wait(required(request.task, "task"));
+      const waited = await manager.wait(required(request.task, "task"), timeoutMs);
       persist();
       return { ok: true, task: waited };
     }
@@ -168,7 +170,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
         required(request.notes, "notes"),
         Number(request.stateVersion),
       );
-      const waited = await manager.wait(updated.taskId);
+      const waited = await manager.wait(updated.taskId, timeoutMs);
       const reviewPacket = manager.reviewPacket(waited.taskId);
       persist();
       return { ok: true, task: waited, reviewPacket };

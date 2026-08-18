@@ -41,10 +41,10 @@ export class McpStdioClient {
     });
   }
 
-  async request(method: string, params: unknown = {}): Promise<unknown> {
+  async request(method: string, params: unknown = {}, timeoutMs = 900_000): Promise<unknown> {
     const id = this.nextId++;
     const result = new Promise((resolveReq, rejectReq) => {
-      const timer = setTimeout(() => rejectReq(new Error(`${method} timed out`)), 30_000);
+      const timer = setTimeout(() => rejectReq(new Error(`${method} timed out`)), timeoutMs);
       this.pending.set(id, (message) => {
         clearTimeout(timer);
         if (message.error) rejectReq(new Error(message.error.message));

@@ -54,6 +54,8 @@
 | 两轮 revision 两边都成立 | PASS |
 | cancel 两边都成立 | PASS |
 | Phase 1 `AcpRuntimeDriver` + fake ACP | PASS（`tests/acp-driver.test.ts`） |
+| Codex MCP `bridge_*` + replay smoke | PASS |
+| live Claude via MCP `bridge_run`/`approve` | PASS（修 `add()`，checkpoint 在任务分支） |
 
 ---
 

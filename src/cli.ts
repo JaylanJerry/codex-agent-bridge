@@ -55,6 +55,7 @@ function toRequest(flags: FlagMap): BridgeRequest {
     inPlace: flags.values["in-place"] === "true",
     verifyIds: flags.lists.verify,
     files: parseWrites(flags),
+    timeoutMs: flags.values["timeout-ms"] ? Number(flags.values["timeout-ms"]) : undefined,
   };
 }
 
