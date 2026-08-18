@@ -63,18 +63,64 @@ export function cherryPickToRepo(repoPath: string, commit: string): string {
     windowsHide: true,
   });
   if (proc.status !== 0) {
+    const detail = `${proc.stderr || proc.stdout}`;
     spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", "--abort"], {
       cwd: abs,
       encoding: "utf8",
       windowsHide: true,
     });
-    throw new Error(`cherry-pick failed: ${proc.stderr || proc.stdout}`);
+    if (/now empty|previous cherry-pick is now empty|already applied/i.test(detail)) {
+      return git(abs, ["rev-parse", "HEAD"]);
+    }
+    throw new Error(`cherry-pick failed: ${detail}`);
   }
   return git(abs, ["rev-parse", "HEAD"]);
 }
 
 export function repoHead(repoPath: string): string {
   return git(resolve(repoPath), ["rev-parse", "HEAD"]);
+}
+
+export function revParseOptional(cwd: string, rev: string): string | undefined {
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "rev-parse", "--verify", rev], {
+    cwd: resolve(cwd),
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) return undefined;
+  return (proc.stdout ?? "").trim() || undefined;
+}
+
+export function isAncestor(repoPath: string, commit: string, head = "HEAD"): boolean {
+  const proc = spawnSync(
+    "git",
+    ["-c", "core.longpaths=true", "merge-base", "--is-ancestor", commit, head],
+    { cwd: resolve(repoPath), encoding: "utf8", windowsHide: true },
+  );
+  return proc.status === 0;
+}
+
+export function gitDir(repoPath: string): string {
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "rev-parse", "--absolute-git-dir"], {
+    cwd: resolve(repoPath),
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) return join(resolve(repoPath), ".git");
+  return (proc.stdout ?? "").trim();
+}
+
+export function cherryPickInProgress(repoPath: string): boolean {
+  const dir = gitDir(repoPath);
+  return existsSync(join(dir, "CHERRY_PICK_HEAD")) || existsSync(join(dir, "sequencer"));
+}
+
+export function abortCherryPick(repoPath: string): void {
+  spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", "--abort"], {
+    cwd: resolve(repoPath),
+    encoding: "utf8",
+    windowsHide: true,
+  });
 }
 
 export function worktreeKey(path: string): string {

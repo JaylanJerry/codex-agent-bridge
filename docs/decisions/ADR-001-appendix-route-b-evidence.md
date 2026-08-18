@@ -1,7 +1,8 @@
 # ADR-001 Appendix: Route B Evidence
 
 **日期：** 2026-08-19  
-**主文状态：** ADR-001 **Accepted**（路线 B）。本附录仍是实现审计，不改代码。
+**主文状态：** ADR-001 **Accepted**（路线 B）。  
+**V1.0.0 更新：** 跨进程 `core.lock`、原子 `tasks.json`、`FINALIZING` 恢复、apply/并发测试、journal 轮转、安装 README 已实现（见 `tests/v1-p0.test.ts` / `tests/v1-p1.test.ts`）。下文第 1–2 节保留当时缺口审计原文，不再代表当前代码。
 
 证据标记：`PROVEN` = 当前代码/测试/commit 支持；`UNPROVEN` = 无测试或无运行时观测。
 
@@ -27,7 +28,8 @@
 
 - 禁止：两个 MCP 进程、或 CLI 与 MCP、同时作为同一 `project/.agent-bridge-data` 的写者。
 - 禁止：在已有写者持锁时 `getCore` 成功并 `hydrate`/`save`。
-- fail-closed：占用排他锁（例如 `.agent-bridge-data/core.lock`）。第二进程立即返回 `ok: false, code: CORE_LOCK_HELD`，不读不写 `tasks.json`。锁随进程退出释放。
+- fail-closed：占用排他锁（例如 `.agent-bridge-data/core.lock`）。第二进程立即返回 `ok: false, code: CORE_LOCK_HELD`，不读不写 `tasks.json`。
+- **stale-lock（规范，尚未实现）：** 持锁 pid 仍存活 → `CORE_LOCK_HELD`，不得接管。持锁进程已退出但锁文件仍在 → 新 Writer 可接管；接管前必须确认原 pid 已死。无法判定死活时 fail-closed，保持 `CORE_LOCK_HELD`，由 `doctor` 标明占用或疑似 stale，禁止静默删锁后继续写。正常退出应释放锁；崩溃不得永久堵死该项目，也不得双写。
 - 单进程内允许多 Task（见第 4 项）；禁的是**第二套 Core 实例**。
 
 此项为规范缺口，不是现成行为。`doctor` 的 `codex-mcp` 只检查 `config.toml` 有无 `[mcp_servers.agent-bridge]`（`src/core/doctor.ts`），不检测第二进程。
@@ -170,7 +172,7 @@ ACP `sessionUpdate` 为空函数（`src/runtime/acp/driver.ts`）。无 last-eve
 
 | 项 | 做到才算完成 | 现状 |
 |---|---|---|
-| 安装 | 文档给出本机 Node 路径；一条清单或脚本能让 `bridge_doctor` 在目标机上 git/node/tsx/job-object 为 ok（Windows）。不要求单文件 EXE | 源码 + `npm install`。无 installer。**未完成** |
+| 安装 | 文档给出本机 Node 路径；一条清单或脚本能让 `bridge_doctor` 在目标机上 git/node/tsx/job-object 为 ok（Windows）。不要求单文件 EXE。前提：用户至少已有一个可独立正常运行、完成认证和配置的 Worker；Bridge 检测，不配置 Worker 模型或第三方 Provider | 源码 + `npm install`。无 installer。**未完成** |
 | MCP 注册 | `~/.codex/config.toml` 出现 `[mcp_servers.agent-bridge]`，command 为 `node.exe` + `--import tsx` + `server.ts`，cwd 为仓库，`NODE_PATH` 指向本仓库 `node_modules`。新开 Codex 会话 `tools/list` 含 `bridge_run`/`bridge_respond`/`bridge_apply`。`doctor` 的 `codex-mcp` ok | 作者机已配（`docs/CODEX_SKILL.md`）。无安装器写入 toml。**作者 PROVEN；陌生人 UNPROVEN** |
 | Skill | `~/.codex/skills/agent-bridge/SKILL.md` 与仓库 `skills/agent-bridge/SKILL.md` 同步。闭环含 respond / timeout / hydrate 后 continue | 实现者手动 Copy。doctor **不检查** Skill 文件。**未完成自动化** |
 | 凭证 | doctor 只报「存在/缺失」，不打印值。Claude：本机 Claude 凭证文件。DeepSeek：`DEEPSEEK_API_KEY` 或现有 loader。无则 `bridge_agents` 标不可用，**不**把密钥写入 journal（`tests/journal.test.ts` redact） | 检测已有（`src/core/doctor.ts`、`src/workers/credentials.ts`）。无引导 UI。Windows Credential Store **未做**。V1 不要求 Store，要求：缺密钥时 fail 清晰、不泄漏 |

@@ -303,7 +303,7 @@ rl.on("line", async (line) => {
     reply(id, {
       protocolVersion: params?.protocolVersion ?? PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      serverInfo: { name: "agent-bridge", version: "0.5.0" },
+      serverInfo: { name: "agent-bridge", version: "1.0.0" },
     });
     return;
   }

@@ -3,7 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Journal } from "../persistence/journal.ts";
 import { redact } from "../persistence/redact.ts";
-import { FileTaskStore } from "../persistence/store.ts";
+import { FileTaskStore, TaskStoreCorruptedError } from "../persistence/store.ts";
+import { acquireCoreLock, CoreLockHeldError, type CoreLockHandle } from "../persistence/lock.ts";
 import { ReplayRuntimeDriver, type ReplayTurn } from "../runtime/replay/driver.ts";
 import { AcpRuntimeDriver } from "../runtime/acp/driver.ts";
 import { TaskManager, StateVersionConflictError, TaskAlreadyExistsError } from "../core/task-manager.ts";
@@ -75,7 +76,11 @@ function fail(error: unknown): BridgeResult {
       ? "STATE_VERSION_CONFLICT"
       : error instanceof TaskAlreadyExistsError
         ? "TASK_ALREADY_EXISTS"
-        : "ERROR";
+        : error instanceof CoreLockHeldError
+          ? "CORE_LOCK_HELD"
+          : error instanceof TaskStoreCorruptedError
+            ? "TASK_STORE_CORRUPTED"
+            : "ERROR";
   return { ok: false, error: err.message, code };
 }
 
@@ -84,6 +89,7 @@ type CoreSlot = {
   store: FileTaskStore;
   drivers: Map<string, RuntimeDriver>;
   profiles: Map<string, WorkerProfile>;
+  lock: CoreLockHandle;
 };
 
 const cores = new Map<string, CoreSlot>();
@@ -122,36 +128,42 @@ function getCore(
   }
 
   const dir = dataDirFor(projectPath);
-  const store = new FileTaskStore(join(dir, "tasks.json"));
-  const snapshot = store.load();
-  const workerIds = new Set<string>([
-    "replay",
-    ...extraWorkers,
-    ...snapshot.tasks.map((task) => task.workerId),
-  ]);
-  const drivers = new Map<string, RuntimeDriver>([
-    ["replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : [])],
-  ]);
-  const profiles = new Map<string, WorkerProfile>([["replay", replayProfile]]);
-  if ([...workerIds].some((id) => id === "claude" || id === "deepseek" || id === "fake")) {
-    drivers.set("acp", new AcpRuntimeDriver());
+  const lock = acquireCoreLock(dir);
+  try {
+    const store = new FileTaskStore(join(dir, "tasks.json"));
+    const snapshot = store.load();
+    const workerIds = new Set<string>([
+      "replay",
+      ...extraWorkers,
+      ...snapshot.tasks.map((task) => task.workerId),
+    ]);
+    const drivers = new Map<string, RuntimeDriver>([
+      ["replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : [])],
+    ]);
+    const profiles = new Map<string, WorkerProfile>([["replay", replayProfile]]);
+    if ([...workerIds].some((id) => id === "claude" || id === "deepseek" || id === "fake")) {
+      drivers.set("acp", new AcpRuntimeDriver());
+    }
+    if (workerIds.has("claude")) {
+      profiles.set("claude", claudeProfile(resolveClaudeLaunch(repoRoot)));
+    }
+    if (workerIds.has("deepseek")) {
+      profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
+    }
+    if (workerIds.has("fake")) {
+      profiles.set("fake", fakeAcpProfile(repoRoot));
+    }
+    const manager = new TaskManager(drivers, profiles, new Journal(join(dir, "journal.ndjson")));
+    manager.setPersist(() => store.save(manager.snapshot()));
+    manager.hydrate(snapshot);
+    store.save(manager.snapshot());
+    const slot = { manager, store, drivers, profiles, lock };
+    cores.set(key, slot);
+    return slot;
+  } catch (error) {
+    lock.release();
+    throw error;
   }
-  if (workerIds.has("claude")) {
-    profiles.set("claude", claudeProfile(resolveClaudeLaunch(repoRoot)));
-  }
-  if (workerIds.has("deepseek")) {
-    profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
-  }
-  if (workerIds.has("fake")) {
-    profiles.set("fake", fakeAcpProfile(repoRoot));
-  }
-  const manager = new TaskManager(drivers, profiles, new Journal(join(dir, "journal.ndjson")));
-  manager.setPersist(() => store.save(manager.snapshot()));
-  manager.hydrate(snapshot);
-  store.save(manager.snapshot());
-  const slot = { manager, store, drivers, profiles };
-  cores.set(key, slot);
-  return slot;
 }
 
 export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {

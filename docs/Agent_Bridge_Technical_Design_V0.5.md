@@ -97,7 +97,7 @@ AcpRuntimeDriver      # DeepSeek / Claude / fake ACP
 
 `WorkerProfile.launch.cwd` 是 **进程 cwd**（DeepSeek 必须是 harness 根）。`session/new` 的 `cwd` 永远是 **task worktree**。
 
-Windows 上不要 spawn `.cmd`（EINVAL）。用 `node.exe` 或真实 `.exe`。
+Windows 上 Node `child_process.spawn` 把 `.cmd` / `.bat` 当 `command` 会 EINVAL。MCP 注册与 Bridge 自 spawn 的 Node 入口用 `node.exe` 或真实 `.exe`，不要用 `npx.cmd` / `tsx.cmd`。这不是禁止一切 `.cmd`：若某 Worker 只提供 `.cmd` shim，属该 Worker 启动兼容，用已校验 argv 的受控封装，不接受自由 shell 字符串。
 
 Claude 适配器路径相对于仓库，不要 `resolve("../../acp-claude")` 相对 cwd。
 
@@ -161,7 +161,7 @@ npm test
 
 产品方向见 **ADR-001 Accepted / 路线 B**（`docs/decisions/ADR-001-post-mvp-direction.md`）。HTTP daemon、SQLite、GUI、EXE 推迟，需新证据才开 ADR-002。
 
-可分发 V1 的 **P0 阻塞项**（尚未实现）：跨进程单写者 `CORE_LOCK_HELD`；`tasks.json` 原子写入 + 损坏 fail-closed；`FINALIZING` 确定性崩溃恢复。
+可分发 V1 的 **P0 阻塞项已实现**：跨进程单写者 `CORE_LOCK_HELD`；`tasks.json` 原子写入 + 损坏 fail-closed；`FINALIZING` 确定性崩溃恢复。下一步见 `PRODUCT_GUIDE.md`（V1.x 或干净机器 Claude live）。
 
 仍不做（直至 ADR-002）：
 

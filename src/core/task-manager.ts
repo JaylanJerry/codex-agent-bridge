@@ -1,15 +1,19 @@
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { isTerminalState, needsAttention, transition, type BridgeTaskInput, type TaskRecord } from "./state.ts";
 import { Journal } from "../persistence/journal.ts";
 import type { TaskSnapshot } from "../persistence/store.ts";
 import {
+  abortCherryPick,
   checkpointCommit,
+  cherryPickInProgress,
   cherryPickToRepo,
   createTaskWorktree,
   listAgentBridgeWorktrees,
   removeEmptyAgentBridgeDir,
   removeTaskWorktree,
   repoHead,
+  revParseOptional,
   worktreeKey,
   type WorktreeHandle,
 } from "../workspace/worktree.ts";
@@ -42,6 +46,7 @@ export class TaskManager {
   private readonly turns = new Map<string, Promise<void>>();
   private readonly permissionResolvers = new Map<string, (outcome: PermissionOutcome) => void>();
   private readonly turnEpoch = new Map<string, number>();
+  private readonly mutating = new Set<string>();
   private permissionMode: PermissionMode = "auto";
 
   private persistHook: (() => void) | undefined;
@@ -75,12 +80,50 @@ export class TaskManager {
   }
 
   private recoverInFlight(task: TaskRecord): void {
+    if (task.state === "FINALIZING") {
+      this.recoverFinalizing(task);
+      return;
+    }
+    if (isTerminalState(task.state)) {
+      if (task.worktreePath && task.worktreePath !== task.projectPath) this.cleanupWorktree(task);
+      return;
+    }
     if (!["QUEUED", "STARTING", "RUNNING", "VERIFYING", "WAITING_FOR_INPUT"].includes(task.state)) {
       return;
     }
     task.interrupted = true;
     task.pendingInput = undefined;
     this.setState(task, "AWAITING_REVIEW");
+  }
+
+  private recoverFinalizing(task: TaskRecord): void {
+    task.interrupted = true;
+    const checkpointCwd =
+      task.worktreePath && existsSync(task.worktreePath) ? task.worktreePath : undefined;
+    let commit = task.approvedCommit;
+    if (!commit && checkpointCwd) {
+      try {
+        commit = checkpointCommit(checkpointCwd, `checkpoint: ${task.taskId}`);
+      } catch (error) {
+        this.journal.append("finalizing-recovery-failed", { error: String(error) }, task.taskId);
+        this.persist();
+        return;
+      }
+    }
+    if (!commit && task.taskBranch) {
+      const branchHead = revParseOptional(task.projectPath, task.taskBranch);
+      if (branchHead && branchHead !== task.baseCommit) commit = branchHead;
+    }
+    if (!commit) {
+      this.journal.append("finalizing-recovery-failed", { reason: "checkpoint-missing" }, task.taskId);
+      this.setState(task, "FAILED");
+      return;
+    }
+    task.approvedCommit = commit;
+    task.verdict = "APPROVED";
+    this.setState(task, "COMPLETED");
+    this.cleanupWorktree(task);
+    this.persist();
   }
 
   snapshot(): TaskSnapshot {
@@ -331,92 +374,104 @@ export class TaskManager {
 
   continue(taskId: string, notes: string, expectedStateVersion: number): TaskRecord {
     const task = this.require(taskId);
-    this.assertVersion(task, expectedStateVersion);
-    if (task.state !== "AWAITING_REVIEW" && task.state !== "TASK_TIMED_OUT") {
-      throw new Error("continue requires AWAITING_REVIEW or TASK_TIMED_OUT");
-    }
-    task.verdict = "NEEDS_REVISION";
-    task.reviewNotes = notes;
-    task.interrupted = false;
-    this.setState(task, "RUNNING");
-    this.startTurn(task, notes);
-    return task;
+    return this.mutate(task, expectedStateVersion, () => {
+      if (task.state !== "AWAITING_REVIEW" && task.state !== "TASK_TIMED_OUT") {
+        throw new Error("continue requires AWAITING_REVIEW or TASK_TIMED_OUT");
+      }
+      task.verdict = "NEEDS_REVISION";
+      task.reviewNotes = notes;
+      task.interrupted = false;
+      this.setState(task, "RUNNING");
+      this.startTurn(task, notes);
+      return task;
+    });
   }
 
   respond(taskId: string, optionId: string, expectedStateVersion: number): TaskRecord {
     const task = this.require(taskId);
-    this.assertVersion(task, expectedStateVersion);
-    if (task.state !== "WAITING_FOR_INPUT") throw new Error("respond requires WAITING_FOR_INPUT");
-    const resolver = this.permissionResolvers.get(taskId);
-    if (!resolver) {
-      throw new Error("no live permission waiter; Core restarted — use continue to REHYDRATE");
-    }
-    if (optionId !== "cancelled") {
-      const known = task.pendingInput?.options.some((option) => option.optionId === optionId);
-      if (!known) throw new Error(`unknown permission option ${optionId}`);
-    }
-    task.pendingInput = undefined;
-    this.setState(task, "RUNNING");
-    resolver(optionId === "cancelled" ? { outcome: "cancelled" } : { outcome: "selected", optionId });
-    this.permissionResolvers.delete(taskId);
-    return task;
+    return this.mutate(task, expectedStateVersion, () => {
+      if (task.state !== "WAITING_FOR_INPUT") throw new Error("respond requires WAITING_FOR_INPUT");
+      const resolver = this.permissionResolvers.get(taskId);
+      if (!resolver) {
+        throw new Error("no live permission waiter; Core restarted — use continue to REHYDRATE");
+      }
+      if (optionId !== "cancelled") {
+        const known = task.pendingInput?.options.some((option) => option.optionId === optionId);
+        if (!known) throw new Error(`unknown permission option ${optionId}`);
+      }
+      task.pendingInput = undefined;
+      this.setState(task, "RUNNING");
+      resolver(optionId === "cancelled" ? { outcome: "cancelled" } : { outcome: "selected", optionId });
+      this.permissionResolvers.delete(taskId);
+      return task;
+    });
   }
 
   approve(taskId: string, expectedStateVersion: number): TaskRecord {
     const task = this.require(taskId);
-    this.assertVersion(task, expectedStateVersion);
-    if (task.state !== "AWAITING_REVIEW") throw new Error("approve requires AWAITING_REVIEW");
-    const changeSet = collectChanges(task.worktreePath ?? task.projectPath, task.baseCommit ?? "");
-    const current = changeSetHash(changeSet);
-    const expected = this.reviewHashes.get(taskId);
-    if (expected && expected !== current) {
-      throw new Error("review drift: ChangeSet changed after review");
-    }
-    this.setState(task, "FINALIZING");
-    task.verdict = "APPROVED";
-    if (task.worktreePath) {
-      task.approvedCommit = checkpointCommit(
-        task.worktreePath,
-        `checkpoint: ${task.taskId}`,
-      );
-    }
-    this.setState(task, "COMPLETED");
-    this.cleanupWorktree(task);
-    return task;
+    return this.mutate(task, expectedStateVersion, () => {
+      if (task.state !== "AWAITING_REVIEW") throw new Error("approve requires AWAITING_REVIEW");
+      const changeSet = collectChanges(task.worktreePath ?? task.projectPath, task.baseCommit ?? "");
+      const current = changeSetHash(changeSet);
+      const expected = this.reviewHashes.get(taskId);
+      if (expected && expected !== current) {
+        throw new Error("review drift: ChangeSet changed after review");
+      }
+      this.setState(task, "FINALIZING");
+      task.verdict = "APPROVED";
+      if (task.worktreePath) {
+        task.approvedCommit = checkpointCommit(
+          task.worktreePath,
+          `checkpoint: ${task.taskId}`,
+        );
+      }
+      this.setState(task, "COMPLETED");
+      this.cleanupWorktree(task);
+      this.persist();
+      return task;
+    });
   }
 
   apply(taskId: string, expectedStateVersion: number): TaskRecord {
     const task = this.require(taskId);
-    this.assertVersion(task, expectedStateVersion);
-    if (task.state !== "COMPLETED" || task.verdict !== "APPROVED" || !task.approvedCommit) {
-      throw new Error("apply requires an approved checkpoint");
-    }
-    const head = repoHead(task.projectPath);
-    if (task.appliedHead && task.appliedHead === head) return task;
-    task.appliedHead = cherryPickToRepo(task.projectPath, task.approvedCommit);
-    this.journal.append("applied", { head: task.appliedHead, commit: task.approvedCommit }, task.taskId);
-    return task;
+    return this.mutate(task, expectedStateVersion, () => {
+      if (task.state !== "COMPLETED" || task.verdict !== "APPROVED" || !task.approvedCommit) {
+        throw new Error("apply requires an approved checkpoint");
+      }
+      if (cherryPickInProgress(task.projectPath)) abortCherryPick(task.projectPath);
+      const head = repoHead(task.projectPath);
+      if (task.appliedHead && task.appliedHead === head) return task;
+      task.stateVersion += 1;
+      this.journal.append("apply-claimed", { stateVersion: task.stateVersion }, task.taskId);
+      this.persist();
+      task.appliedHead = cherryPickToRepo(task.projectPath, task.approvedCommit);
+      this.journal.append("applied", { head: task.appliedHead, commit: task.approvedCommit }, task.taskId);
+      this.persist();
+      return task;
+    });
   }
 
   reject(taskId: string, expectedStateVersion: number): TaskRecord {
     const task = this.require(taskId);
-    this.assertVersion(task, expectedStateVersion);
-    task.verdict = "REJECTED";
-    this.setState(task, "FAILED");
-    this.cleanupWorktree(task);
-    return task;
+    return this.mutate(task, expectedStateVersion, () => {
+      task.verdict = "REJECTED";
+      this.setState(task, "FAILED");
+      this.cleanupWorktree(task);
+      return task;
+    });
   }
 
   async cancel(taskId: string, expectedStateVersion: number): Promise<TaskRecord> {
     const task = this.require(taskId);
-    this.assertVersion(task, expectedStateVersion);
-    task.interrupted = true;
-    await this.stopSession(task);
-    if (!["COMPLETED", "FAILED", "CANCELLED"].includes(task.state)) {
-      this.setState(task, "CANCELLED");
-    }
-    this.cleanupWorktree(task);
-    return task;
+    return this.mutateAsync(task, expectedStateVersion, async () => {
+      task.interrupted = true;
+      await this.stopSession(task);
+      if (!["COMPLETED", "FAILED", "CANCELLED"].includes(task.state)) {
+        this.setState(task, "CANCELLED");
+      }
+      this.cleanupWorktree(task);
+      return task;
+    });
   }
 
   recoverInterrupted(taskId: string, workerPid?: number): TaskRecord {
@@ -494,6 +549,35 @@ export class TaskManager {
 
   private assertVersion(task: TaskRecord, expected: number): void {
     if (task.stateVersion !== expected) throw new StateVersionConflictError();
+  }
+
+  private beginMutation(taskId: string): void {
+    if (this.mutating.has(taskId)) throw new StateVersionConflictError();
+    this.mutating.add(taskId);
+  }
+
+  private endMutation(taskId: string): void {
+    this.mutating.delete(taskId);
+  }
+
+  private mutate<T>(task: TaskRecord, expected: number, fn: () => T): T {
+    this.beginMutation(task.taskId);
+    try {
+      this.assertVersion(task, expected);
+      return fn();
+    } finally {
+      this.endMutation(task.taskId);
+    }
+  }
+
+  private async mutateAsync<T>(task: TaskRecord, expected: number, fn: () => Promise<T>): Promise<T> {
+    this.beginMutation(task.taskId);
+    try {
+      this.assertVersion(task, expected);
+      return await fn();
+    } finally {
+      this.endMutation(task.taskId);
+    }
   }
 
   private setState(task: TaskRecord, next: TaskRecord["state"]): void {

@@ -7,6 +7,7 @@ import { hasDeepseekApiKey } from "../workers/credentials.ts";
 import { createKillOnCloseJob } from "../process/job-object.ts";
 import { isTerminalState, type TaskRecord } from "./state.ts";
 import { listAgentBridgeWorktrees, worktreeKey } from "../workspace/worktree.ts";
+import { inspectCoreLock } from "../persistence/lock.ts";
 
 export type DoctorCheck = {
   id: string;
@@ -84,20 +85,32 @@ function mcpRegistered(): DoctorCheck {
   };
 }
 
-function loadTasks(projectPath: string): TaskRecord[] {
+function skillInstalled(): DoctorCheck {
+  const skillPath = join(homedir(), ".codex", "skills", "agent-bridge", "SKILL.md");
+  const ok = existsSync(skillPath);
+  return {
+    id: "codex-skill",
+    ok,
+    detail: ok ? skillPath : `${skillPath} missing — copy skills/agent-bridge/SKILL.md`,
+  };
+}
+
+function loadTaskStore(projectPath: string): { tasks: TaskRecord[]; corrupted?: string } {
   const path = join(projectPath, ".agent-bridge-data", "tasks.json");
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) return { tasks: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as { tasks?: TaskRecord[] };
-    return parsed.tasks ?? [];
-  } catch {
-    return [];
+    return { tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [] };
+  } catch (error) {
+    return { tasks: [], corrupted: error instanceof Error ? error.message : String(error) };
   }
 }
 
 export function listOrphanWorktrees(projectPath: string): string[] {
+  const store = loadTaskStore(projectPath);
+  if (store.corrupted) return [];
   const protectedKeys = new Set(
-    loadTasks(projectPath)
+    store.tasks
       .filter((task) => !isTerminalState(task.state) && task.worktreePath)
       .map((task) => worktreeKey(task.worktreePath!)),
   );
@@ -159,7 +172,22 @@ export function runDoctor(opts: { repoRoot: string; projectPath?: string }): Doc
     },
     probeJobObject(),
     mcpRegistered(),
+    skillInstalled(),
   ];
+  const agents = listAgents(opts.repoRoot);
+  const readyWorkers = agents.filter(
+    (agent) =>
+      (agent.id === "claude" && agent.available && !agent.detail.includes("credentials file not found")) ||
+      (agent.id === "deepseek" && agent.available),
+  );
+  checks.push({
+    id: "worker-ready",
+    ok: readyWorkers.length > 0,
+    detail:
+      readyWorkers.length > 0
+        ? readyWorkers.map((agent) => agent.id).join(", ")
+        : "no independently configured Worker (Claude credentials or DeepSeek API key). Bridge detects; it does not configure models or third-party providers",
+  });
   if (opts.projectPath) {
     const gitDir = existsSync(join(opts.projectPath, ".git"));
     checks.push({
@@ -176,6 +204,23 @@ export function runDoctor(opts: { repoRoot: string; projectPath?: string }): Doc
         : ".agent-bridge/verify.json missing (verification will skip)",
     });
     if (gitDir) {
+      const dataDir = join(opts.projectPath, ".agent-bridge-data");
+      if (existsSync(dataDir)) {
+        const lock = inspectCoreLock(dataDir);
+        checks.push({
+          id: "core-lock",
+          ok: lock.state !== "unreadable",
+          detail: lock.detail,
+        });
+        const store = loadTaskStore(opts.projectPath);
+        checks.push({
+          id: "tasks-json",
+          ok: !store.corrupted,
+          detail: store.corrupted
+            ? `TASK_STORE_CORRUPTED: ${store.corrupted}`
+            : `${store.tasks.length} task(s)`,
+        });
+      }
       const orphans = listOrphanWorktrees(opts.projectPath);
       checks.push({
         id: "orphan-worktrees",
@@ -187,6 +232,6 @@ export function runDoctor(opts: { repoRoot: string; projectPath?: string }): Doc
   return {
     version: packageVersion(opts.repoRoot),
     checks,
-    agents: listAgents(opts.repoRoot),
+    agents,
   };
 }

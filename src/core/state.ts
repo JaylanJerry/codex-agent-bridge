@@ -88,6 +88,7 @@ export function needsAttention(task: TaskRecord): boolean {
     task.interrupted ||
     task.state === "AWAITING_REVIEW" ||
     task.state === "WAITING_FOR_INPUT" ||
+    task.state === "FINALIZING" ||
     task.state === "FAILED" ||
     task.state === "TASK_TIMED_OUT"
   );

@@ -1,6 +1,6 @@
 # Agent Bridge 最终开发指导
 
-**版本：** 2026-08-19 / Final Guidance  
+**版本：** 2026-08-19 / V1.0.0  
 **产品方向：** `docs/PRODUCT_GUIDE.md`（现行后续路线）  
 **裁决：** `docs/decisions/ADR-001-post-mvp-direction.md` — **Accepted，路线 B**  
 **实现接口：** `Agent_Bridge_Technical_Design_V0.5.md`（架构思想见 V0.4，不要当 backlog）

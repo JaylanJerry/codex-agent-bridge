@@ -1,7 +1,7 @@
 {
   "name": "agent-relay",
   "private": true,
-  "version": "0.5.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "test": "tsx --test tests/**/*.test.ts",
@@ -9,7 +9,9 @@
     "mcp": "tsx src/mcp/server.ts",
     "mcp:smoke": "tsx scripts/replay-mcp-smoke.ts",
     "mcp:claude-smoke": "tsx scripts/live-claude-mcp-smoke.ts",
-    "mcp:deepseek-smoke": "tsx scripts/live-deepseek-mcp-smoke.ts"
+    "mcp:deepseek-smoke": "tsx scripts/live-deepseek-mcp-smoke.ts",
+    "install:user": "tsx scripts/install.ts",
+    "doctor": "tsx src/cli.ts doctor"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.25.1",

@@ -4,6 +4,8 @@
 
 Accepted
 
+本修订（Worker 配置策略、`core.lock` stale-lock、Windows `.cmd` 表述）**不改变 Status，不重开路线 A/B**。
+
 ## Date
 
 2026-08-19（Proposed 同日；Accepted 2026-08-19）
@@ -30,20 +32,22 @@ OpenCode 及其他 Agent 后接，只加 Profile，不作为本 ADR 范围。
 
 ### P0（阻塞可分发 V1；不阻塞本 ADR 已 Accepted）
 
-- [ ] **跨进程单写者，fail-closed**  
-  一个 `project/.agent-bridge-data` 同一时刻最多一个 Writer Core。`cores` Map 只覆盖本进程，不足。第二写者（另一 MCP 进程或 CLI）必须立即 `CORE_LOCK_HELD`：**不得 hydrate、不得写 `tasks.json`**。完成后路线 B 的「单 MCP Core 产品模型」才成立。
-- [ ] **`tasks.json` 原子持久化 + 损坏 fail-closed**  
+- [x] **跨进程单写者，fail-closed**  
+  一个 `project/.agent-bridge-data` 同一时刻最多一个 Writer Core。`cores` Map 只覆盖本进程，不足。第二写者（另一 MCP 进程或 CLI）必须立即 `CORE_LOCK_HELD`：**不得 hydrate、不得写 `tasks.json`**。完成后路线 B 的「单 MCP Core 产品模型」才成立。  
+  **stale-lock：** 持锁 pid 仍存活 → 不得接管。持锁进程已退出但 `core.lock` 仍在 → 新 Writer 可接管；接管前必须确认原 pid 已死。无法判定死活时 fail-closed（`CORE_LOCK_HELD`），`doctor` 标明占用或疑似 stale，禁止静默删锁后继续写。正常退出应释放锁；崩溃不得永久堵死该项目，也不得双写。
+- [x] **`tasks.json` 原子持久化 + 损坏 fail-closed**  
   `write temp` → 完整写入成功 → atomic replace。`JSON.parse` 失败 **不得** 变成 `tasks: []`，必须 `TASK_STORE_CORRUPTED`（或等价）。不需要 SQLite。
-- [ ] **`FINALIZING` 确定性崩溃恢复**  
+- [x] **`FINALIZING` 确定性崩溃恢复**  
   hydrate / `needsAttention` 必须看见它。区分：checkpoint 未创建；checkpoint 已有但 COMPLETED 未持久化；COMPLETED 已持久化但 worktree 未拆。确定性恢复，不猜测。不需要 HTTP/SQLite。
 
 ### P1（不阻塞 ADR 接受；发布前应做）
 
-- [ ] `apply` 中途崩溃 / 幂等故障注入（cherry-pick 成功但 `appliedHead` 未 persist；kill 留下 cherry-picking 状态）。apply 改用户当前仓库，对外发布前必须测。属路线 B 可靠性，不是改走 HTTP/SQLite 的理由
-- [ ] 同 Task 并发命令测试：`approve`+`continue`、`respond`+`cancel`、两个 `apply`。非法竞争须 `STATE_VERSION_CONFLICT`，禁止先产生副作用再报错。两个 `apply` 同改用户 repo 为重点
-- [ ] journal / 数据 retention
-- [ ] 安装、MCP 注册引导、Skill 安装、凭证引导、doctor 补全、卸载说明
-- [ ] 干净 Windows / 陌生用户：从安装说明开始，不改 Bridge 源码，完成一次 Claude `run → permission → verify → approve → apply`
+- [x] `apply` 中途崩溃 / 幂等故障注入（cherry-pick 成功但 `appliedHead` 未 persist；kill 留下 cherry-picking 状态）。apply 改用户当前仓库，对外发布前必须测。属路线 B 可靠性，不是改走 HTTP/SQLite 的理由
+- [x] 同 Task 并发命令测试：`approve`+`continue`、`respond`+`cancel`、两个 `apply`。非法竞争须 `STATE_VERSION_CONFLICT`，禁止先产生副作用再报错。两个 `apply` 同改用户 repo 为重点
+- [x] journal / 数据 retention
+- [x] 安装、MCP 注册引导、Skill 安装、凭证引导、doctor 补全、卸载说明。完成标准：用户至少已有一个可独立正常运行、完成认证和配置的 Worker；Bridge 负责检测，不负责配置 Worker 模型或第三方 Provider。MCP `command` 用 `node.exe` + tsx，不要用 `npx.cmd` / `tsx.cmd`（Node 直接 spawn `.cmd` 会 EINVAL；这不是禁止一切 `.cmd` shim）
+- [ ] 干净 Windows / 陌生用户：从安装说明开始，不改 Bridge 源码，完成一次 Claude `run → permission → verify → approve → apply`（README / `scripts/install.ts` 已就绪；live 需按文档在目标机跑）
+- [x] **Worker Configuration Inheritance Test：** 分别验证 Claude Code 与 DeepSeek Harness 经 Bridge 新启动的 Session 继承用户已有持久 model / effort 配置。某 Worker 不继承时只做该 Worker 最小兼容，不建立统一模型管理系统
 
 同进程多 `tools/call` 重叠（`rl.on("line", async ...)` 无队列）**不**升为 ADR 阻塞。不同 Task 允许并行；同 Task 靠 `stateVersion`。尚无实际 race 失败证据。P1 并发测试覆盖即可。
 
@@ -52,6 +56,10 @@ OpenCode 及其他 Agent 后接，只加 Profile，不作为本 ADR 范围。
 不是取消：HTTP daemon、SQLite、GUI、single-file EXE。
 
 可触发 ADR-002 的例：多个 Codex 窗口必须共享同一个 live Worker Core；跨 Codex 会话必须保持 Agent 实时运行；JSON 单写者出现实测性能/可靠性瓶颈；必须有独立桌面端管理大量并发任务。
+
+### 明确推迟（不塞进 V1，不另开 ADR-002）
+
+按 Task 覆盖 model / effort、Execution Profile、Provider 管理。V1 只选 Worker，继承用户原生持久配置。Claude 的 upstream provider 是 Worker 内部实现。
 
 ---
 
@@ -78,6 +86,7 @@ OpenCode 及其他 Agent 后接，只加 Profile，不作为本 ADR 范围。
 | apply | cherry-pick，不是 merge |
 | Turn 结束 ≠ 任务完成 | 只有 Supervisor approve 后才 COMPLETED |
 | OpenCode | 本 ADR **不要求现在接入**；后续慢慢加 Profile |
+| V1 只选 Worker | 不选择/管理 model、provider、reasoning effort、model routing；不猜测 effective upstream model。Claude 走官方 Anthropic / CC Switch / 其他第三方 Provider 均为 Worker 内部实现 |
 
 ---
 

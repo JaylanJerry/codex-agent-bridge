@@ -36,7 +36,7 @@ bridge_run
 → 用户要落到当前分支时：bridge_apply（cherry-pick，不是 merge）
 ```
 
-`worker`：调试用 `replay`；闸门自检可用 `fake`；真干活用 `claude` 或 `deepseek`。
+`worker`：调试用 `replay`；闸门自检可用 `fake`；真干活用 `claude` 或 `deepseek`。V1 **只选 worker**。不要传、不要编造 `model` / `provider` / `effort`；用户已在 Claude Code 或 DeepSeek Harness 里按原生方式配好，Bridge 启动时继承。Claude 背后的官方 Anthropic、CC Switch 或其他第三方 Provider 是 Worker 内部实现，不要猜测 effective upstream model。
 
 项目里如果有 `.agent-bridge/verify.json`，`bridge_run` 会默认跑其中全部 verifyId。也可显式传 `verifyIds`。示例：`templates/verify.json`。
 
@@ -63,3 +63,4 @@ CLI 默认 auto（一次进程无法跨调用停闸）。
 - crash / 死 pid / MCP 进程退出：不要 reattach 死 pid。hydrate 后看 `interrupted`。`bridge_continue` 会尝试 Claude `session/load`；失败或 DeepSeek 则 REHYDRATE
 - DeepSeek 没有 `session/load`；Claude 可以 cold load
 - `bridge_logs` / journal 会脱敏，不要把密钥写进 notes
+- V1 不管理 Worker 的 model / provider / effort；`bridge_run` 只选 worker

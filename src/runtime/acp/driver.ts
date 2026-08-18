@@ -110,7 +110,7 @@ export class AcpRuntimeDriver implements RuntimeDriver {
       const init = await live.connection.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {},
-        clientInfo: { name: "agent-bridge", version: "0.5.0" },
+        clientInfo: { name: "agent-bridge", version: "1.0.0" },
       });
       live.session.loadSession = Boolean(init.agentCapabilities?.loadSession);
       const resumeId = options?.resumeSessionId;
