@@ -1,16 +1,30 @@
 # Agent Bridge Codex 接入
 
-## MCP（已用 `codex mcp add` 注册）
+## 一条命令
+
+```text
+npx -y codex-agent-bridge
+```
+
+然后新开一轮 Codex。MCP 段由安装器写入，`command` 为本机 `node.exe`，运行时在 `~/.agent-bridge`，不要手写 `npx.cmd` / `tsx.cmd`。
+
+开发者从本仓库接入：
+
+```text
+npx tsx src/cli.ts setup --dev
+```
+
+## MCP 形态
 
 ```toml
 [mcp_servers.agent-bridge]
-command = 'C:\Program Files\nodejs\node.exe'
-args = ["--import", "tsx", 'C:\Users\jjbon\Documents\Codex\Agent Relay\src\mcp\server.ts']
-cwd = 'C:\Users\jjbon\Documents\Codex\Agent Relay'
+command = "<node.exe>"
+args = ["--import", "tsx", "<packageRoot>/src/mcp/server.ts"]
+cwd = "<packageRoot>"
 startup_timeout_sec = 30
 
 [mcp_servers.agent-bridge.env]
-NODE_PATH = 'C:\Users\jjbon\Documents\Codex\Agent Relay\node_modules'
+NODE_PATH = "<node_modules>"
 ```
 
 Windows 上 Node 直接 spawn `.cmd` / `.bat` 会 EINVAL，所以 MCP 的 `command` 用 `node.exe` + `--import tsx`，不要用 `npx.cmd` / `tsx.cmd`。若某 Worker 只提供 `.cmd` shim，那是该 Worker 的启动兼容问题，不是「Windows 永远禁止 `.cmd`」。改完配置后需要新开一轮 Codex 才会看到工具。

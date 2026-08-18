@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,6 +9,7 @@ import { createKillOnCloseJob } from "../process/job-object.ts";
 import { isTerminalState, type TaskRecord } from "./state.ts";
 import { listAgentBridgeWorktrees, worktreeKey } from "../workspace/worktree.ts";
 import { inspectCoreLock } from "../persistence/lock.ts";
+import { codexHome } from "../paths.ts";
 
 export type DoctorCheck = {
   id: string;
@@ -71,8 +73,23 @@ function claudeCredentialsPresent(): boolean {
   );
 }
 
+function tsxPresent(repoRoot: string): DoctorCheck {
+  try {
+    const require = createRequire(join(repoRoot, "package.json"));
+    const resolved = require.resolve("tsx/package.json");
+    return { id: "tsx", ok: true, detail: resolved };
+  } catch {
+    const fallback = join(repoRoot, "node_modules", "tsx", "package.json");
+    return {
+      id: "tsx",
+      ok: existsSync(fallback),
+      detail: fallback,
+    };
+  }
+}
+
 function mcpRegistered(): DoctorCheck {
-  const configPath = join(homedir(), ".codex", "config.toml");
+  const configPath = join(codexHome(), "config.toml");
   if (!existsSync(configPath)) {
     return { id: "codex-mcp", ok: false, detail: `${configPath} missing` };
   }
@@ -86,12 +103,12 @@ function mcpRegistered(): DoctorCheck {
 }
 
 function skillInstalled(): DoctorCheck {
-  const skillPath = join(homedir(), ".codex", "skills", "agent-bridge", "SKILL.md");
+  const skillPath = join(codexHome(), "skills", "agent-bridge", "SKILL.md");
   const ok = existsSync(skillPath);
   return {
     id: "codex-skill",
     ok,
-    detail: ok ? skillPath : `${skillPath} missing — copy skills/agent-bridge/SKILL.md`,
+    detail: ok ? skillPath : `${skillPath} missing — run: npx -y codex-agent-bridge`,
   };
 }
 
@@ -121,9 +138,7 @@ export function listAgents(repoRoot: string): AgentInfo[] {
   const claudePath = claudeAdapterPath(repoRoot);
   const claudeOk = existsSync(claudePath);
   const harness = deepSeekHarnessRoot(repoRoot);
-  const deepseekOk =
-    existsSync(join(harness, "packages/examples/acp-demo/src/bin.ts")) &&
-    existsSync(join(harness, "examples/acp-agent/cordis.yml"));
+  const deepseekOk = Boolean(harness);
   const deepseekKey = hasDeepseekApiKey();
   return [
     {
@@ -153,10 +168,10 @@ export function listAgents(repoRoot: string): AgentInfo[] {
       runtime: "acp",
       loadSession: false,
       detail: !deepseekOk
-        ? `harness missing under ${harness}`
+        ? "harness not found (set AGENT_BRIDGE_DEEPSEEK_ROOT; Bridge does not install DeepSeek Harness)"
         : deepseekKey
-          ? "harness present; API key present"
-          : "harness present; DEEPSEEK_API_KEY missing",
+          ? `harness present at ${harness}; API key present`
+          : `harness present at ${harness}; DEEPSEEK_API_KEY missing`,
     },
   ];
 }
@@ -165,11 +180,7 @@ export function runDoctor(opts: { repoRoot: string; projectPath?: string }): Doc
   const checks: DoctorCheck[] = [
     { id: "node", ok: true, detail: process.version },
     gitVersion(),
-    {
-      id: "tsx",
-      ok: existsSync(join(opts.repoRoot, "node_modules", "tsx", "package.json")),
-      detail: join(opts.repoRoot, "node_modules", "tsx"),
-    },
+    tsxPresent(opts.repoRoot),
     probeJobObject(),
     mcpRegistered(),
     skillInstalled(),

@@ -13,5 +13,6 @@ experiments/**/.state/
 experiments/process-ownership/*.exe
 phase0/artifacts/
 .agent-bridge-data/
+*.tgz
 
 

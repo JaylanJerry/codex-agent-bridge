@@ -10,6 +10,8 @@ Codex 是 Supervisor。Worker 是外部完整 Coding Agent。Bridge **不调用 
 MCP server 名：`agent-bridge`  
 工具前缀：`bridge_*`
 
+安装：`npx -y codex-agent-bridge`，然后新开 Codex。
+
 ## 什么时候用
 
 用户要改一个 git 仓库，且应该由 Claude Code 或 DeepSeek Harness 执行。

@@ -1,11 +1,12 @@
 # Agent Bridge 产品指导（现行）
 
-**日期：** 2026-08-19（同日小修订：Worker 配置策略、stale-lock、`.cmd` 表述）  
-**效力：** 开发与发布以本文 + `docs/decisions/ADR-001-post-mvp-direction.md` 为准。  
+**日期：** 2026-08-19（同日修订：npm 一条命令分发，见 ADR-003）  
+**效力：** 开发与发布以本文 + `docs/decisions/ADR-001-post-mvp-direction.md` + `docs/decisions/ADR-003-npm-distribution.md` 为准。  
 **ADR-001：** **Accepted**（路线 B）。本修订不重开 A/B，不改阶段顺序。  
-**与旧文冲突时：** ADR-001 与本文 > V0.5 实现接口 > V0.4 愿望清单。`IMPLEMENTATION_ROADMAP.md` 只作历史。
+**ADR-003：** **Accepted**。陌生人入口是 `npx -y codex-agent-bridge`，不是 clone，也不是 EXE。  
+**与旧文冲突时：** ADR-001、ADR-003 与本文 > V0.5 实现接口 > V0.4 愿望清单。`IMPLEMENTATION_ROADMAP.md` 只作历史。
 
-仓库仍叫 Agent Relay，产品名是 **Agent Bridge**。
+仓库仍叫 Agent Relay，产品名是 **Agent Bridge**。npm 包名是 `codex-agent-bridge`。
 
 ---
 
@@ -39,7 +40,7 @@ Turn 结束不是任务完成。Worker 不得 commit / push / merge / rebase。D
 | 跨进程单写者锁 | **已落地（V1 P0）** |
 | `tasks.json` 原子写 + 损坏 fail-closed | **已落地（V1 P0）** |
 | `FINALIZING` 崩溃恢复 | **已落地（V1 P0）** |
-| 安装 / Skill / 凭证引导 / 卸载 / retention | **已落地（V1 P1）** |
+| 安装 / Skill / 凭证引导 / 卸载 / retention | **已落地（V1 P1）**；npm 一条命令见 ADR-003 |
 | 干净机器陌生用户验收 | **已通过（2026-08-19 作者机 Windows；独立测试仓；未改 Bridge 源码）** |
 | HTTP daemon / SQLite / GUI / 单文件 EXE | **推迟（ADR-002）** |
 | OpenCode 及其他 Agent | **后接 Profile** |
@@ -103,7 +104,7 @@ Claude 背后走官方 Anthropic、CC Switch 或其他第三方 Provider，一�
 4. `apply` 故障注入：cherry-pick 成功未 persist；kill 留在 cherry-picking。
 5. 同 Task 并发：`approve`+`continue`、`respond`+`cancel`、两个 `apply` → `STATE_VERSION_CONFLICT`，禁止先改仓库再报错。
 6. journal retention；`prune` 已有，补日志轮转策略。
-7. 安装说明或脚本 / README 完成标准：Node、MCP 写入 `config.toml`（`command` 用 `node.exe` + tsx，不要用 `npx.cmd` / `tsx.cmd`）、拷 Skill、凭证「有/无」检测、doctor 补 Skill/锁、卸载说明。前提：用户**至少已有一个**可独立正常运行、完成认证和配置的 Worker。Agent Bridge 负责检测，**不负责**配置 Worker 模型或第三方 Provider。
+7. 安装说明或脚本 / README 完成标准：Node、MCP 写入 `config.toml`（`command` 用 `node.exe` + tsx，不要用 `npx.cmd` / `tsx.cmd`）、拷 Skill、凭证「有/无」检测、doctor 补 Skill/锁、卸载说明。前提：用户**至少已有一个**可独立正常运行、完成认证和配置的 Worker。Agent Bridge 负责检测，**不负责**配置 Worker 模型或第三方 Provider。陌生人入口：`npx -y codex-agent-bridge`（落到 `~/.agent-bridge`，不 clone 仓库）。
 8. **最终验收：** 干净 Windows、不改 Bridge 源码、Claude `run → permission → verify → approve → apply`。
 9. **Worker Configuration Inheritance Test：** 分别验证 Claude Code 与 DeepSeek Harness 经 Bridge **新启动**的 Session 确实继承用户已有持久 model / effort 配置。某 Worker 不继承时，只做该 Worker 的最小兼容，不建立统一模型管理系统。
 

@@ -1,8 +1,33 @@
 {
-  "name": "agent-relay",
-  "private": true,
-  "version": "1.0.0",
+  "name": "codex-agent-bridge",
+  "version": "1.1.0",
+  "private": false,
+  "description": "Codex supervises Claude Code or DeepSeek Harness. The Bridge does not call an LLM.",
+  "license": "MIT",
+  "author": "JaylanJerry",
+  "homepage": "https://github.com/JaylanJerry/codex-agent-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JaylanJerry/codex-agent-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JaylanJerry/codex-agent-bridge/issues"
+  },
   "type": "module",
+  "bin": {
+    "codex-agent-bridge": "bin/codex-agent-bridge.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "tsx --test tests/**/*.test.ts",
     "cli": "tsx src/cli.ts",
@@ -10,16 +35,28 @@
     "mcp:smoke": "tsx scripts/replay-mcp-smoke.ts",
     "mcp:claude-smoke": "tsx scripts/live-claude-mcp-smoke.ts",
     "mcp:deepseek-smoke": "tsx scripts/live-deepseek-mcp-smoke.ts",
-    "install:user": "tsx scripts/install.ts",
+    "setup": "tsx src/cli.ts setup --dev",
+    "install:user": "tsx src/cli.ts setup --dev",
     "doctor": "tsx src/cli.ts doctor"
   },
+  "keywords": [
+    "codex",
+    "mcp",
+    "claude-code",
+    "deepseek",
+    "agent-bridge"
+  ],
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.69.0",
     "@agentclientprotocol/sdk": "0.25.1",
-    "koffi": "^2.14.1"
+    "koffi": "^2.14.1",
+    "tsx": "^4.22.4"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "tsx": "^4.22.4",
     "typescript": "^5.9.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

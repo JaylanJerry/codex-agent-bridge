@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
+import { packageRoot as repoRoot } from "../paths.ts";
 import { Journal } from "../persistence/journal.ts";
 import { redact } from "../persistence/redact.ts";
 import { FileTaskStore, TaskStoreCorruptedError } from "../persistence/store.ts";
@@ -20,8 +20,6 @@ import {
 import type { PermissionMode, RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
 import type { BridgeTaskInput, TaskRecord } from "../core/state.ts";
 import type { ReviewPacket } from "../review/packet.ts";
-
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 export type BridgeResult = {
   ok: boolean;
@@ -177,7 +175,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
     return {
       ok: true,
       usage:
-        "agent-bridge run|status|wait|review-packet|diff|approve|continue|respond|reject|cancel|apply|logs|doctor|agents|version|prune",
+        "codex-agent-bridge setup|uninstall|run|status|wait|review-packet|diff|approve|continue|respond|reject|cancel|apply|logs|doctor|agents|version|prune",
     };
   }
 

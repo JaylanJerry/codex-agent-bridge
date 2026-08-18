@@ -62,6 +62,22 @@ function toRequest(flags: FlagMap): BridgeRequest {
   };
 }
 
-const result = await dispatch(toRequest(parseArgv(process.argv.slice(2))));
+const rawArgv = process.argv.slice(2);
+const setupCommand = rawArgv[0];
+const isSetup = setupCommand === "setup" || setupCommand === "install" || setupCommand === "uninstall";
+
+if (isSetup) {
+  const { runSetup } = await import("./install/setup.ts");
+  runSetup({
+    uninstall: setupCommand === "uninstall",
+    dev: rawArgv.includes("--dev"),
+    printOnly: rawArgv.includes("--print-only"),
+    purge: rawArgv.includes("--purge"),
+    writeMcp: !rawArgv.includes("--print-only"),
+  });
+  process.exit(0);
+}
+
+const result = await dispatch(toRequest(parseArgv(rawArgv)));
 console.log(JSON.stringify(result, null, 2));
 process.exit(result.ok ? 0 : 1);
