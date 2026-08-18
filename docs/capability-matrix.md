@@ -56,6 +56,7 @@
 | Phase 1 `AcpRuntimeDriver` + fake ACP | PASS（`tests/acp-driver.test.ts`） |
 | Codex MCP `bridge_*` + replay smoke | PASS |
 | live Claude via MCP `bridge_run`/`approve` | PASS（修 `add()`，checkpoint 在任务分支） |
+| live DeepSeek via MCP `bridge_run`/`approve` | PASS（需注入 `DEEPSEEK_API_KEY`；修 `add()`） |
 
 ---
 
