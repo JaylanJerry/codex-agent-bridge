@@ -25,7 +25,13 @@ function bridge(project: string, args: string[]) {
   });
   const parsed = JSON.parse(proc.stdout || "{}") as {
     ok?: boolean;
-    task?: { taskId: string; state: string; stateVersion: number; approvedCommit?: string };
+    task?: {
+      taskId: string;
+      state: string;
+      stateVersion: number;
+      approvedCommit?: string;
+      worktreePath?: string;
+    };
     reviewPacket?: { changedFiles: { path: string }[] };
     error?: string;
   };
@@ -84,5 +90,38 @@ test("CLI replay loop: run, continue, approve checkpoint", () => {
   assert.ok(approved.parsed.task?.approvedCommit);
   assert.equal(git(root, ["rev-parse", "HEAD"]), base);
   assert.notEqual(approved.parsed.task?.approvedCommit, base);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("CLI persist review hash so later approve detects drift", () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-cli-drift-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+
+  const first = bridge(root, [
+    "run",
+    "--objective",
+    "bump v",
+    "--worker",
+    "replay",
+    "--write",
+    "src.ts=export const v = 2;\\n",
+  ]);
+  assert.equal(first.status, 0);
+  writeFileSync(join(first.parsed.task!.worktreePath!, "sneak.ts"), "nope\n");
+  const approved = bridge(root, [
+    "approve",
+    "--task",
+    first.parsed.task!.taskId,
+    "--state-version",
+    String(first.parsed.task!.stateVersion),
+  ]);
+  assert.equal(approved.status, 1);
+  assert.equal(approved.parsed.ok, false);
+  assert.match(approved.parsed.error ?? "", /review drift/);
   rmSync(root, { recursive: true, force: true });
 });

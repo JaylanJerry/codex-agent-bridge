@@ -212,9 +212,11 @@ Codex cherry-pick测试
 
 ## 10. Phase 3：Codex正式入口
 
+**状态（2026-08-18）：stdio MCP server 已落地**（`src/mcp/server.ts`，与 CLI 共用 `src/api/client.ts`）。
+
 实现MCP server和用户级Skill。
 
-Skill必须教：
+Skill必须教（见 `docs/CODEX_SKILL.md`）：
 
 ```text
 什么时候委派

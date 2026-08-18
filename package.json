@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "tsx --test tests/**/*.test.ts",
-    "cli": "tsx src/cli.ts"
+    "cli": "tsx src/cli.ts",
+    "mcp": "tsx src/mcp/server.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.25.1",

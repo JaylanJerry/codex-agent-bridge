@@ -49,7 +49,9 @@ cancel
 logs
 ```
 
-未实现（Phase 2/3）：`respond`、`doctor`、`agents`、`version`、MCP、loopback HTTP daemon。
+未实现（Phase 2 其余项）：`respond`、`doctor`、`agents`、`version`、loopback HTTP daemon。
+
+MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_logs`），走 `src/api/client.ts`。
 
 破坏性命令必须带 `--state-version`。不匹配则 `STATE_VERSION_CONFLICT`。
 
