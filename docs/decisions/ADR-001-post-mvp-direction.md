@@ -4,6 +4,8 @@
 
 Proposed（待审核，尚未采纳）
 
+路线 B 实现审计附录（6 问）：`docs/decisions/ADR-001-appendix-route-b-evidence.md`
+
 ## Date
 
 2026-08-19
