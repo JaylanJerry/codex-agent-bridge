@@ -29,6 +29,7 @@ export type BridgeResult = {
   reviewPacket?: ReviewPacket;
   diff?: string;
   events?: unknown[];
+  head?: string;
 };
 
 export type BridgeRequest = {
@@ -106,7 +107,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
   if (!request.command || request.command === "help") {
     return {
       ok: true,
-      usage: "agent-bridge run|status|wait|review-packet|diff|approve|continue|reject|cancel|logs",
+      usage: "agent-bridge run|status|wait|review-packet|diff|approve|continue|reject|cancel|apply|logs",
     };
   }
 
@@ -184,6 +185,11 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       const updated = await manager.cancel(required(request.task, "task"), Number(request.stateVersion));
       persist();
       return { ok: true, task: updated };
+    }
+    if (request.command === "apply") {
+      const updated = manager.apply(required(request.task, "task"), Number(request.stateVersion));
+      persist();
+      return { ok: true, task: updated, head: updated.appliedHead };
     }
     if (request.command === "logs") {
       const raw = readFileSync(join(dataDirFor(projectPath), "journal.ndjson"), "utf8");

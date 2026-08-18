@@ -23,3 +23,5 @@ npm run mcp:smoke
 
 Skill 源文件：`skills/agent-bridge/SKILL.md`  
 用户级副本：`~/.codex/skills/agent-bridge/SKILL.md`
+
+`approve` 只在任务分支打 checkpoint 并拆掉 worktree。要把结果落到当前分支，用 `bridge_apply`（cherry-pick，禁止 merge）。项目里若有 `.agent-bridge/verify.json`，默认会跑其中全部 verifyId。

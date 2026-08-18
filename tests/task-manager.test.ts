@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -176,5 +176,86 @@ test("cancel marks task cancelled without waiting for worker", async () => {
   assert.equal(cancelled.state, "CANCELLED");
   await manager.drain(created.taskId);
   assert.equal(manager.get(created.taskId).state, "CANCELLED");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("approve removes worktree then apply cherry-picks onto current branch", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-apply-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  const base = git(root, ["rev-parse", "HEAD"]);
+  const manager = new TaskManager(
+    new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } }])]]),
+    new Map([["replay", replayProfile]]),
+    new Journal(join(root, "journal.ndjson")),
+  );
+  const created = manager.run({
+    schemaVersion: "1.2",
+    clientRequestId: "apply-1",
+    objective: "bump",
+    projectPath: root,
+    workerId: "replay",
+  });
+  const first = await manager.wait(created.taskId);
+  manager.reviewPacket(first.taskId);
+  const worktreePath = first.worktreePath!;
+  const approved = manager.approve(first.taskId, first.stateVersion);
+  assert.equal(approved.state, "COMPLETED");
+  assert.equal(existsSync(worktreePath), false);
+  assert.equal(git(root, ["rev-parse", "HEAD"]), base);
+  const landed = manager.apply(approved.taskId, approved.stateVersion);
+  assert.equal(git(root, ["rev-parse", "HEAD"]), landed.appliedHead);
+  assert.notEqual(landed.appliedHead, base);
+  assert.match(git(root, ["show", "HEAD:src.ts"]), /export const v = 2/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("verify.json ids run by default and continue reuses them", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-ver-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
+  mkdirSync(join(root, ".agent-bridge"), { recursive: true });
+  writeFileSync(
+    join(root, ".agent-bridge", "verify.json"),
+    JSON.stringify({
+      commands: { ok: { exe: process.execPath, args: ["-e", "process.stdout.write('verified')"] } },
+    }),
+  );
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  const manager = new TaskManager(
+    new Map([
+      [
+        "replay",
+        new ReplayRuntimeDriver([
+          { stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } },
+          { stopReason: "end_turn", files: { "note.md": "n\n" } },
+        ]),
+      ],
+    ]),
+    new Map([["replay", replayProfile]]),
+    new Journal(join(root, "journal.ndjson")),
+  );
+  const created = manager.run({
+    schemaVersion: "1.2",
+    clientRequestId: "ver-1",
+    objective: "bump",
+    projectPath: root,
+    workerId: "replay",
+  });
+  const first = await manager.wait(created.taskId);
+  assert.equal(first.lastVerification?.passed, true);
+  assert.match(first.lastVerification?.output ?? "", /verified/);
+  const packet = manager.reviewPacket(first.taskId);
+  assert.equal(packet.verification?.passed, true);
+  const continued = manager.continue(first.taskId, "add note", first.stateVersion);
+  const second = await manager.wait(continued.taskId);
+  assert.equal(second.lastVerification?.passed, true);
   rmSync(root, { recursive: true, force: true });
 });

@@ -31,9 +31,11 @@ function bridge(project: string, args: string[]) {
       stateVersion: number;
       approvedCommit?: string;
       worktreePath?: string;
+    appliedHead?: string;
     };
-    reviewPacket?: { changedFiles: { path: string }[] };
+    reviewPacket?: { changedFiles: { path: string }[]; verification?: { passed: boolean } };
     error?: string;
+    head?: string;
   };
   if (proc.status !== 0 && parsed.ok !== false) {
     throw new Error(proc.stderr || proc.stdout || `cli exited ${proc.status}`);
@@ -90,6 +92,17 @@ test("CLI replay loop: run, continue, approve checkpoint", () => {
   assert.ok(approved.parsed.task?.approvedCommit);
   assert.equal(git(root, ["rev-parse", "HEAD"]), base);
   assert.notEqual(approved.parsed.task?.approvedCommit, base);
+  assert.equal(approved.parsed.task?.worktreePath, undefined);
+
+  const applied = bridge(root, [
+    "apply",
+    "--task",
+    approved.parsed.task!.taskId,
+    "--state-version",
+    String(approved.parsed.task!.stateVersion),
+  ]);
+  assert.equal(applied.status, 0);
+  assert.equal(git(root, ["rev-parse", "HEAD"]), applied.parsed.task?.appliedHead);
   rmSync(root, { recursive: true, force: true });
 });
 

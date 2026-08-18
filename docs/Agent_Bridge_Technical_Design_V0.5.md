@@ -46,12 +46,15 @@ approve
 continue
 reject
 cancel
+apply
 logs
 ```
 
 未实现（Phase 2 其余项）：`respond`、`doctor`、`agents`、`version`、loopback HTTP daemon。
 
-MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_logs`），走 `src/api/client.ts`。
+MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_apply` / `bridge_logs`），走 `src/api/client.ts`。
+
+`approve` 后会拆掉 task worktree，checkpoint 留在任务分支。`apply` 把 `approvedCommit` cherry-pick 到 `project` 当前分支，**不是 merge**。
 
 破坏性命令必须带 `--state-version`。不匹配则 `STATE_VERSION_CONFLICT`。
 

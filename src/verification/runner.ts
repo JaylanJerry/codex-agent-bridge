@@ -4,6 +4,15 @@ import { join } from "node:path";
 
 export type VerifyResult = { passed: boolean; output: string; skipped: boolean };
 
+export function listVerifyIds(worktreePath: string): string[] {
+  const configPath = join(worktreePath, ".agent-bridge", "verify.json");
+  if (!existsSync(configPath)) return [];
+  const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+    commands?: Record<string, unknown>;
+  };
+  return Object.keys(config.commands ?? {});
+}
+
 export function runVerification(worktreePath: string, verifyIds: string[]): VerifyResult {
   const configPath = join(worktreePath, ".agent-bridge", "verify.json");
   if (!existsSync(configPath)) {

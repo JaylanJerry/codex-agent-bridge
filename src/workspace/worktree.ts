@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 function git(cwd: string, args: string[]): string {
@@ -34,8 +34,15 @@ export function createTaskWorktree(repoPath: string, taskId: string): WorktreeHa
   return { repoPath: abs, worktreePath, taskBranch, baseCommit };
 }
 
-export function removeTaskWorktree(handle: WorktreeHandle): void {
-  git(handle.repoPath, ["worktree", "remove", "--force", handle.worktreePath]);
+export function removeTaskWorktree(handle: Pick<WorktreeHandle, "repoPath" | "worktreePath">): void {
+  try {
+    git(handle.repoPath, ["worktree", "remove", "--force", handle.worktreePath]);
+  } catch {
+    // already detached
+  }
+  if (existsSync(handle.worktreePath)) {
+    rmSync(handle.worktreePath, { recursive: true, force: true });
+  }
 }
 
 export function checkpointCommit(worktreePath: string, message: string): string {
@@ -46,4 +53,26 @@ export function checkpointCommit(worktreePath: string, message: string): string 
   }
   git(worktreePath, ["-c", "user.name=agent-bridge", "-c", "user.email=agent-bridge@localhost", "commit", "-m", message]);
   return git(worktreePath, ["rev-parse", "HEAD"]);
+}
+
+export function cherryPickToRepo(repoPath: string, commit: string): string {
+  const abs = resolve(repoPath);
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", commit], {
+    cwd: abs,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) {
+    spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", "--abort"], {
+      cwd: abs,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    throw new Error(`cherry-pick failed: ${proc.stderr || proc.stdout}`);
+  }
+  return git(abs, ["rev-parse", "HEAD"]);
+}
+
+export function repoHead(repoPath: string): string {
+  return git(resolve(repoPath), ["rev-parse", "HEAD"]);
 }

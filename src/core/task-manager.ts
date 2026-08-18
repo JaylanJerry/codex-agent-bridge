@@ -4,12 +4,15 @@ import { Journal } from "../persistence/journal.ts";
 import type { TaskSnapshot } from "../persistence/store.ts";
 import {
   checkpointCommit,
+  cherryPickToRepo,
   createTaskWorktree,
+  removeTaskWorktree,
+  repoHead,
   type WorktreeHandle,
 } from "../workspace/worktree.ts";
 import { changeSetHash, collectChanges, worktreeDiff } from "../workspace/changes.ts";
 import { buildReviewPacket, type ReviewPacket } from "../review/packet.ts";
-import { runVerification } from "../verification/runner.ts";
+import { listVerifyIds, runVerification } from "../verification/runner.ts";
 import type { RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
 
 export class TaskAlreadyExistsError extends Error {
@@ -94,6 +97,7 @@ export class TaskManager {
       projectPath: input.projectPath,
       workerId: input.workerId,
       acceptanceCriteria: input.acceptanceCriteria,
+      verification: resolveVerification(input, worktreePath),
     };
     this.tasks.set(taskId, task);
     this.byRequest.set(input.clientRequestId, taskId);
@@ -156,7 +160,7 @@ export class TaskManager {
       if (this.shouldAbortTurn(task)) return;
       task.lastStopReason = result.stopReason;
       this.journal.append("worker-turn-finished", result, task.taskId);
-      const verifyIds = input?.verification?.enabled ? input.verification.verifyIds : [];
+      const verifyIds = task.verification?.enabled ? task.verification.verifyIds : [];
       if (verifyIds.length > 0) {
         this.setState(task, "VERIFYING");
         const verification = runVerification(task.worktreePath ?? task.projectPath, verifyIds);
@@ -231,6 +235,20 @@ export class TaskManager {
       );
     }
     this.setState(task, "COMPLETED");
+    this.cleanupWorktree(task);
+    return task;
+  }
+
+  apply(taskId: string, expectedStateVersion: number): TaskRecord {
+    const task = this.require(taskId);
+    this.assertVersion(task, expectedStateVersion);
+    if (task.state !== "COMPLETED" || task.verdict !== "APPROVED" || !task.approvedCommit) {
+      throw new Error("apply requires an approved checkpoint");
+    }
+    const head = repoHead(task.projectPath);
+    if (task.appliedHead && task.appliedHead === head) return task;
+    task.appliedHead = cherryPickToRepo(task.projectPath, task.approvedCommit);
+    this.journal.append("applied", { head: task.appliedHead, commit: task.approvedCommit }, task.taskId);
     return task;
   }
 
@@ -239,6 +257,7 @@ export class TaskManager {
     this.assertVersion(task, expectedStateVersion);
     task.verdict = "REJECTED";
     this.setState(task, "FAILED");
+    this.cleanupWorktree(task);
     return task;
   }
 
@@ -258,6 +277,7 @@ export class TaskManager {
     if (!["COMPLETED", "FAILED", "CANCELLED"].includes(task.state)) {
       this.setState(task, "CANCELLED");
     }
+    this.cleanupWorktree(task);
     return task;
   }
 
@@ -283,6 +303,16 @@ export class TaskManager {
     return [...this.tasks.values()];
   }
 
+  private cleanupWorktree(task: TaskRecord): void {
+    if (!task.worktreePath || task.worktreePath === task.projectPath) return;
+    try {
+      removeTaskWorktree({ repoPath: task.projectPath, worktreePath: task.worktreePath });
+    } catch (error) {
+      this.journal.append("worktree-cleanup-failed", { error: String(error) }, task.taskId);
+    }
+    task.worktreePath = undefined;
+  }
+
   private require(taskId: string): TaskRecord {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`unknown task ${taskId}`);
@@ -298,4 +328,14 @@ export class TaskManager {
     task.stateVersion += 1;
     this.journal.append("state-changed", { state: task.state, stateVersion: task.stateVersion }, task.taskId);
   }
+}
+
+function resolveVerification(
+  input: BridgeTaskInput,
+  worktreePath: string,
+): BridgeTaskInput["verification"] {
+  if (input.verification) return input.verification;
+  const ids = listVerifyIds(worktreePath);
+  if (ids.length === 0) return undefined;
+  return { enabled: true, verifyIds: ids };
 }

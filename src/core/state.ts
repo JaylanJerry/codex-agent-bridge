@@ -37,6 +37,7 @@ export type TaskRecord = {
   taskBranch?: string;
   baseCommit?: string;
   approvedCommit?: string;
+  appliedHead?: string;
   lastStopReason?: string;
   lastVerification?: { passed: boolean; output: string; skipped: boolean };
   objective: string;
@@ -44,6 +45,7 @@ export type TaskRecord = {
   workerId: string;
   reviewNotes?: string;
   acceptanceCriteria?: { id: string; text: string }[];
+  verification?: { enabled: boolean; verifyIds: string[] };
 };
 
 const allowed: Record<TaskState, TaskState[]> = {

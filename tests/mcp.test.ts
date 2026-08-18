@@ -33,7 +33,7 @@ test("MCP and CLI share Core: run, continue, approve via structured tools", asyn
     assert.equal(init.serverInfo?.name, "agent-bridge");
     const listed = (await client.request("tools/list")) as { tools: { name: string }[] };
     assert.ok(listed.tools.some((tool) => tool.name === "bridge_run"));
-    assert.ok(listed.tools.some((tool) => tool.name === "bridge_approve"));
+    assert.ok(listed.tools.some((tool) => tool.name === "bridge_apply"));
 
     const run = await client.callTool("bridge_run", {
       project: root,
@@ -66,6 +66,15 @@ test("MCP and CLI share Core: run, continue, approve via structured tools", asyn
     assert.equal(done.task?.state, "COMPLETED");
     assert.ok(done.task?.approvedCommit);
     assert.equal(git(root, ["rev-parse", "HEAD"]), base);
+    const applied = await client.callTool("bridge_apply", {
+      project: root,
+      task: done.task!.taskId,
+      stateVersion: done.task!.stateVersion,
+    });
+    const landed = applied.structuredContent as BridgeResult;
+    assert.equal(applied.isError, false);
+    assert.equal(git(root, ["rev-parse", "HEAD"]), landed.task?.appliedHead);
+    assert.notEqual(landed.task?.appliedHead, base);
   } finally {
     client.close();
     rmSync(root, { recursive: true, force: true });

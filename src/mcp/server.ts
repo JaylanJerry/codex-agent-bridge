@@ -144,6 +144,21 @@ const tools = [
     },
   },
   {
+    name: "bridge_apply",
+    description:
+      "Cherry-pick an approved checkpoint onto the current branch of project. Does not merge. Requires COMPLETED + approvedCommit + stateVersion.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string" },
+        task: { type: "string" },
+        stateVersion: { type: "number" },
+      },
+      required: ["project", "task", "stateVersion"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "bridge_logs",
     description: "Return journal events for a project, optionally filtered by task.",
     inputSchema: {
