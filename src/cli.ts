@@ -56,6 +56,7 @@ function toRequest(flags: FlagMap): BridgeRequest {
     verifyIds: flags.lists.verify,
     files: parseWrites(flags),
     timeoutMs: flags.values["timeout-ms"] ? Number(flags.values["timeout-ms"]) : undefined,
+    needsAttention: flags.values["needs-attention"] === "true",
   };
 }
 

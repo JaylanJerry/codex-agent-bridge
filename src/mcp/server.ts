@@ -44,6 +44,10 @@ const tools = [
       properties: {
         project: { type: "string" },
         task: { type: "string" },
+        needsAttention: {
+          type: "boolean",
+          description: "If true, only return AWAITING_REVIEW, FAILED, TASK_TIMED_OUT, or interrupted tasks.",
+        },
       },
       required: ["project"],
       additionalProperties: false,
@@ -160,11 +164,41 @@ const tools = [
   },
   {
     name: "bridge_logs",
-    description: "Return journal events for a project, optionally filtered by task.",
+    description: "Return journal events for a project, optionally filtered by task. Secrets are redacted.",
     inputSchema: {
       type: "object",
       properties: { project: { type: "string" }, task: { type: "string" } },
       required: ["project"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "bridge_doctor",
+    description:
+      "Check git, Node, Job Object, worker adapters, credential presence (not values), Codex MCP registration, and optional orphan worktrees.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Optional target git repo for verify.json and orphan worktree checks." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "bridge_agents",
+    description: "List Worker profiles and whether they are available on this machine. Does not print secrets.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "bridge_version",
+    description: "Return the Agent Bridge package version.",
+    inputSchema: {
+      type: "object",
+      properties: {},
       additionalProperties: false,
     },
   },
@@ -208,6 +242,7 @@ function toRequest(name: string, args: Record<string, unknown> = {}): BridgeRequ
         ? Object.fromEntries(Object.entries(args.files as Record<string, unknown>).map(([key, value]) => [key, String(value)]))
         : undefined,
     timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
+    needsAttention: args.needsAttention === true,
   };
 }
 

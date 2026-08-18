@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { transition } from "../src/core/state.ts";
+import { needsAttention, transition } from "../src/core/state.ts";
 
 test("allows worker turn to review", () => {
   assert.equal(transition("QUEUED", "STARTING"), "STARTING");
@@ -17,4 +17,23 @@ test("approve path", () => {
 test("rejects illegal jumps", () => {
   assert.throws(() => transition("COMPLETED", "RUNNING"));
   assert.throws(() => transition("QUEUED", "COMPLETED"));
+});
+
+test("needs-attention covers review, failure, timeout, and interrupted", () => {
+  const base = {
+    taskId: "t",
+    clientRequestId: "r",
+    stateVersion: 1,
+    verdict: null,
+    interrupted: false,
+    objective: "x",
+    projectPath: "/tmp",
+    workerId: "replay",
+  } as const;
+  assert.equal(needsAttention({ ...base, state: "AWAITING_REVIEW" }), true);
+  assert.equal(needsAttention({ ...base, state: "FAILED" }), true);
+  assert.equal(needsAttention({ ...base, state: "TASK_TIMED_OUT" }), true);
+  assert.equal(needsAttention({ ...base, state: "RUNNING", interrupted: true }), true);
+  assert.equal(needsAttention({ ...base, state: "COMPLETED" }), false);
+  assert.equal(needsAttention({ ...base, state: "CANCELLED" }), false);
 });

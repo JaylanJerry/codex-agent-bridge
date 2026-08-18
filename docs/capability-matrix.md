@@ -57,6 +57,9 @@
 | Codex MCP `bridge_*` + replay smoke | PASS |
 | live Claude via MCP `bridge_run`/`approve` | PASS（修 `add()`，checkpoint 在任务分支） |
 | live DeepSeek via MCP `bridge_run`/`approve` | PASS（需注入 `DEEPSEEK_API_KEY`；修 `add()`） |
+| Core persist `sessionId` + fake ACP `session/load` | PASS（`tests/acp-driver.test.ts`、hydrate continue） |
+| `bridge_doctor` / `agents` / `version` / needs-attention | PASS（密钥不进 JSON） |
+| journal redaction | PASS |
 
 ---
 

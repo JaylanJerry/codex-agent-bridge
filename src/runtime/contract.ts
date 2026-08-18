@@ -15,6 +15,10 @@ export type WorkerProfile = {
   };
 };
 
+export type StartOptions = {
+  resumeSessionId?: string;
+};
+
 export type TurnInput = {
   sessionId: string;
   text: string;
@@ -34,11 +38,12 @@ export type RuntimeSession = {
   worktreePath: string;
   pid?: number;
   loadSession?: boolean;
+  resumed?: boolean;
 };
 
 export interface RuntimeDriver {
   readonly kind: RuntimeKind;
-  start(profile: WorkerProfile, worktreePath: string): Promise<RuntimeSession>;
+  start(profile: WorkerProfile, worktreePath: string, options?: StartOptions): Promise<RuntimeSession>;
   sendTurn(session: RuntimeSession, input: TurnInput): Promise<{ stopReason: string }>;
   cancel(session: RuntimeSession): Promise<void>;
   close(session: RuntimeSession): Promise<void>;

@@ -57,5 +57,17 @@ test("AcpRuntimeDriver drives a fake ACP worker through write and cancel", async
   const cancelled = await pending;
   assert.equal(cancelled.stopReason, "cancelled");
   await driver.close(session);
+
+  const resumedDriver = new AcpRuntimeDriver();
+  const resumed = await resumedDriver.start(profile, root, { resumeSessionId: session.id });
+  assert.equal(resumed.id, session.id);
+  assert.equal(resumed.resumed, true);
+  const second = await resumedDriver.sendTurn(resumed, {
+    sessionId: resumed.id,
+    text: "WRITE resumed.ts\nexport const n = 2;\n",
+  });
+  assert.equal(second.stopReason, "end_turn");
+  assert.match(readFileSync(join(root, "resumed.ts"), "utf8"), /export const n = 2/);
+  await resumedDriver.close(resumed);
   rmSync(root, { recursive: true, force: true });
 });

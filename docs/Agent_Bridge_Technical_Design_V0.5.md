@@ -38,7 +38,7 @@ Worker 范围：只稳定 **DeepSeek Harness** 与 **Claude Code**。
 
 ```text
 run
-status
+status [--needs-attention]
 wait
 review-packet
 diff
@@ -48,11 +48,20 @@ reject
 cancel
 apply
 logs
+doctor
+agents
+version
 ```
 
-未实现（Phase 2 其余项）：`respond`、`doctor`、`agents`、`version`、loopback HTTP daemon。
+未实现（Phase 2 其余项）：`respond`、SQLite、loopback HTTP daemon、EffectivePermission 人工闸、Session TTL / stall daemon。
 
-MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_apply` / `bridge_logs`），走 `src/api/client.ts`。
+MCP stdio server 已提供与 CLI 相同的命令（`bridge_run` … `bridge_apply` / `bridge_logs` / `bridge_doctor` / `bridge_agents` / `bridge_version`），走 `src/api/client.ts`。
+
+`status --needs-attention` / `bridge_status.needsAttention` 只返回 `AWAITING_REVIEW`、`FAILED`、`TASK_TIMED_OUT` 或 `interrupted` 的任务。
+
+`doctor` 检查 git / Node / Job Object / Worker 适配器 / **凭证是否存在（不打印值）** / Codex MCP 注册；若给了 `project`，再检查 `verify.json` 和遗留 `agent-bridge/` worktree。
+
+`continue` 在 Core 重启后会把持久化的 `sessionId` 传给 Runtime：Claude 走 `session/load`，失败则 `session/new` + REHYDRATE。DeepSeek 无 load，直接 REHYDRATE。Journal 写入前脱敏。
 
 `approve` 后会拆掉 task worktree，checkpoint 留在任务分支。`apply` 把 `approvedCommit` cherry-pick 到 `project` 当前分支，**不是 merge**。
 
@@ -125,7 +134,7 @@ DeepSeek Harness
 npm test
 ```
 
-覆盖：状态机、ChangeCollector（含 leading-space porcelain）、worktree checkpoint、replay 两轮+approve、幂等、crash drain、review drift、cancel、verify allowlist、Job Object kill-on-close、fake ACP write+cancel、CLI run/continue/approve。
+覆盖：状态机、ChangeCollector（含 leading-space porcelain）、worktree checkpoint、replay 两轮+approve、幂等、crash drain、review drift、cancel、verify allowlist、Job Object kill-on-close、fake ACP write+cancel+loadSession、CLI run/continue/approve、MCP doctor、journal 脱敏、hydrate 后 continue 传 sessionId。
 
 ---
 
@@ -141,9 +150,13 @@ npm test
 
 ---
 
-## 6. 下一步（Phase 2 之前可继续的 Phase 1 收尾）
+## 6. 下一步（Phase 2 剩余）
 
-1. live DeepSeek / Claude 走 `AcpRuntimeDriver` 的 fixture 闭环（需本机密钥，不在 CI 默认跑）
-2. `cancel` 命令接到 Runtime + Job Object
-3. Codex MCP server（Phase 3）
-4. Core restart 后从 journal/tasks.json 恢复（文件快照已有，缺 daemon）
+已落地本轮：`doctor` / `agents` / `version`、`tasks --needs-attention`、journal redaction、Core 把 Claude `session/load` 接到 hydrate 后的 continue。
+
+仍未做：
+
+1. `respond` / interactive question / permission 人工闸
+2. loopback HTTP Core daemon + SQLite
+3. Session TTL / stall 检测 / worktree retention 自动清理
+4. 把 `.agent-bridge/verify.json` 编进用户测试仓库（模板在 `templates/verify.json`）

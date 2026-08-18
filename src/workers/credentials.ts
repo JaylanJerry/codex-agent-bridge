@@ -15,3 +15,11 @@ export function loadDeepseekApiKey(): string {
   }
   throw new Error("DEEPSEEK_API_KEY missing from env and ~/.dsh/.credentials.yaml");
 }
+
+export function hasDeepseekApiKey(): boolean {
+  try {
+    return loadDeepseekApiKey().length > 0;
+  } catch {
+    return false;
+  }
+}

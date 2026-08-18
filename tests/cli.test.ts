@@ -36,6 +36,9 @@ function bridge(project: string, args: string[]) {
     reviewPacket?: { changedFiles: { path: string }[]; verification?: { passed: boolean } };
     error?: string;
     head?: string;
+    version?: string;
+    checks?: { id: string; ok: boolean }[];
+    tasks?: { taskId: string; state: string }[];
   };
   if (proc.status !== 0 && parsed.ok !== false) {
     throw new Error(proc.stderr || proc.stdout || `cli exited ${proc.status}`);
@@ -103,6 +106,35 @@ test("CLI replay loop: run, continue, approve checkpoint", () => {
   ]);
   assert.equal(applied.status, 0);
   assert.equal(git(root, ["rev-parse", "HEAD"]), applied.parsed.task?.appliedHead);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("CLI doctor and needs-attention listing", () => {
+  const doctor = bridge(process.cwd(), ["doctor"]);
+  assert.equal(doctor.status, 0);
+  assert.ok(doctor.parsed.version);
+  assert.ok((doctor.parsed.checks ?? []).some((check) => check.id === "git" && check.ok));
+
+  const root = mkdtempSync(join(tmpdir(), "ab-cli-attn-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  const first = bridge(root, [
+    "run",
+    "--objective",
+    "bump v",
+    "--worker",
+    "replay",
+    "--write",
+    "src.ts=export const v = 2;\\n",
+  ]);
+  assert.equal(first.status, 0);
+  const attention = bridge(root, ["status", "--needs-attention"]);
+  assert.equal(attention.status, 0);
+  assert.equal(attention.parsed.tasks?.length, 1);
   rmSync(root, { recursive: true, force: true });
 });
 

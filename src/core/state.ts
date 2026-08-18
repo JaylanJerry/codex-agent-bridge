@@ -40,6 +40,8 @@ export type TaskRecord = {
   appliedHead?: string;
   lastStopReason?: string;
   lastVerification?: { passed: boolean; output: string; skipped: boolean };
+  sessionId?: string;
+  sessionResumed?: boolean;
   objective: string;
   projectPath: string;
   workerId: string;
@@ -66,4 +68,13 @@ export function transition(current: TaskState, next: TaskState): TaskState {
     throw new Error(`illegal state transition ${current} -> ${next}`);
   }
   return next;
+}
+
+export function needsAttention(task: TaskRecord): boolean {
+  return (
+    task.interrupted ||
+    task.state === "AWAITING_REVIEW" ||
+    task.state === "FAILED" ||
+    task.state === "TASK_TIMED_OUT"
+  );
 }

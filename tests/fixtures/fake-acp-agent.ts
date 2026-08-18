@@ -23,7 +23,7 @@ const connection = new acp.AgentSideConnection(() => {
     async initialize(params) {
       return {
         protocolVersion: params.protocolVersion,
-        agentCapabilities: { loadSession: false },
+        agentCapabilities: { loadSession: true },
         agentInfo: { name: "fake-acp", version: "0.1.0" },
       };
     },
@@ -34,6 +34,10 @@ const connection = new acp.AgentSideConnection(() => {
       const sessionId = `fake-${sessions.size + 1}`;
       sessions.set(sessionId, { cwd: params.cwd, cancelled: false });
       return { sessionId };
+    },
+    async loadSession(params) {
+      sessions.set(params.sessionId, { cwd: params.cwd, cancelled: false });
+      return {};
     },
     async prompt(params) {
       const session = sessions.get(params.sessionId);

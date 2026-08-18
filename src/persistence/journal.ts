@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { redact } from "./redact.ts";
 
 export type JournalEvent = {
   seq: number;
@@ -13,7 +14,7 @@ export class Journal {
   private seq = 0;
 
   constructor(private readonly path: string) {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(this.path), { recursive: true });
   }
 
   append(type: string, payload?: unknown, taskId?: string): JournalEvent {
@@ -22,7 +23,7 @@ export class Journal {
       timestamp: new Date().toISOString(),
       taskId,
       type,
-      payload,
+      payload: payload === undefined ? undefined : redact(payload),
     };
     appendFileSync(this.path, `${JSON.stringify(event)}\n`);
     return event;

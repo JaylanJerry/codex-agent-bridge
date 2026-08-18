@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: Delegate implementation to an external coding agent through Agent Bridge. Use when Codex should supervise Claude Code or DeepSeek Harness instead of editing the target repo itself. Covers bridge_run, continue, approve, apply, reject, cancel.
+description: Delegate implementation to an external coding agent through Agent Bridge. Use when Codex should supervise Claude Code or DeepSeek Harness instead of editing the target repo itself. Covers bridge_run, continue, approve, apply, reject, cancel, doctor, agents.
 ---
 
 # Agent Bridge
@@ -35,11 +35,13 @@ bridge_run
 
 `worker`：调试用 `replay`；真干活用 `claude` 或 `deepseek`。
 
-项目里如果有 `.agent-bridge/verify.json`，`bridge_run` 会默认跑其中全部 verifyId。也可显式传 `verifyIds`。
+项目里如果有 `.agent-bridge/verify.json`，`bridge_run` 会默认跑其中全部 verifyId。也可显式传 `verifyIds`。示例：`templates/verify.json`。
 
 破坏性调用必须带**当前** `task.stateVersion`。冲突时不要重试旧版本。
 
 `clientRequestId` 相同且内容相同会返回同一 task；内容不同会 `TASK_ALREADY_EXISTS`。
+
+掉线后先 `bridge_status`（`needsAttention: true`）或 `bridge_doctor`。
 
 ## 硬规则
 
@@ -49,5 +51,6 @@ bridge_run
 - 不要信 Worker 自称测过；验证只认 `.agent-bridge/verify.json` 的 verifyId
 - approve 后 worktree 会拆掉，checkpoint 留在任务分支；落到当前分支用 `bridge_apply`（cherry-pick）
 - 不要 merge
-- crash / 死 pid：不要 reattach；看 `interrupted`，必要时 continue 做 REHYDRATE
+- crash / 死 pid：不要 reattach；看 `interrupted`。`bridge_continue` 会尝试 Claude `session/load`；失败或 DeepSeek 则 REHYDRATE
 - DeepSeek 没有 `session/load`；Claude 可以 cold load
+- `bridge_logs` / journal 会脱敏，不要把密钥写进 notes

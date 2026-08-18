@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { transition, type BridgeTaskInput, type TaskRecord } from "./state.ts";
+import { needsAttention, transition, type BridgeTaskInput, type TaskRecord } from "./state.ts";
 import { Journal } from "../persistence/journal.ts";
 import type { TaskSnapshot } from "../persistence/store.ts";
 import {
@@ -139,15 +139,29 @@ export class TaskManager {
     try {
       let session = this.sessions.get(task.taskId);
       if (!session) {
-        const started = await driver.start(profile, task.worktreePath ?? task.projectPath);
+        const previousSessionId = task.sessionId;
+        const started = await driver.start(profile, task.worktreePath ?? task.projectPath, {
+          resumeSessionId: previousSessionId,
+        });
         if (this.shouldAbortTurn(task)) {
           await driver.close(started).catch(() => undefined);
           return;
         }
         session = { profile, sessionId: started.id };
         this.sessions.set(task.taskId, session);
+        task.sessionId = started.id;
+        task.sessionResumed = Boolean(started.resumed);
         task.workerPid = started.pid;
-        this.journal.append("session-created", { sessionId: started.id, pid: started.pid }, task.taskId);
+        this.journal.append(
+          "session-created",
+          {
+            sessionId: started.id,
+            pid: started.pid,
+            resumed: Boolean(started.resumed),
+            resumeAttempted: Boolean(previousSessionId) && !started.resumed,
+          },
+          task.taskId,
+        );
       }
       const result = await driver.sendTurn(
         {
@@ -299,8 +313,10 @@ export class TaskManager {
     return this.require(taskId);
   }
 
-  list(): TaskRecord[] {
-    return [...this.tasks.values()];
+  list(filter?: { needsAttention?: boolean }): TaskRecord[] {
+    const tasks = [...this.tasks.values()];
+    if (filter?.needsAttention) return tasks.filter(needsAttention);
+    return tasks;
   }
 
   private cleanupWorktree(task: TaskRecord): void {

@@ -2,10 +2,12 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Journal } from "../persistence/journal.ts";
+import { redact } from "../persistence/redact.ts";
 import { FileTaskStore } from "../persistence/store.ts";
 import { ReplayRuntimeDriver, type ReplayTurn } from "../runtime/replay/driver.ts";
 import { AcpRuntimeDriver } from "../runtime/acp/driver.ts";
 import { TaskManager, StateVersionConflictError, TaskAlreadyExistsError } from "../core/task-manager.ts";
+import { listAgents, runDoctor, type AgentInfo, type DoctorCheck } from "../core/doctor.ts";
 import {
   claudeProfile,
   deepSeekProfile,
@@ -30,6 +32,9 @@ export type BridgeResult = {
   diff?: string;
   events?: unknown[];
   head?: string;
+  version?: string;
+  checks?: DoctorCheck[];
+  agents?: AgentInfo[];
 };
 
 export type BridgeRequest = {
@@ -45,6 +50,7 @@ export type BridgeRequest = {
   verifyIds?: string[];
   files?: Record<string, string>;
   timeoutMs?: number;
+  needsAttention?: boolean;
 };
 
 function required(value: string | undefined, name: string): string {
@@ -107,11 +113,27 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
   if (!request.command || request.command === "help") {
     return {
       ok: true,
-      usage: "agent-bridge run|status|wait|review-packet|diff|approve|continue|reject|cancel|apply|logs",
+      usage:
+        "agent-bridge run|status|wait|review-packet|diff|approve|continue|reject|cancel|apply|logs|doctor|agents|version",
     };
   }
 
   try {
+    if (request.command === "version") {
+      const report = runDoctor({ repoRoot });
+      return { ok: true, version: report.version };
+    }
+    if (request.command === "agents") {
+      return { ok: true, agents: listAgents(repoRoot) };
+    }
+    if (request.command === "doctor") {
+      const report = runDoctor({
+        repoRoot,
+        projectPath: request.project ? resolve(request.project) : undefined,
+      });
+      return { ok: true, version: report.version, checks: report.checks, agents: report.agents };
+    }
+
     const projectPath = resolve(request.project ?? process.cwd());
     const replayTurn: ReplayTurn = {
       stopReason: "end_turn",
@@ -144,7 +166,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
 
     if (request.command === "status") {
       if (request.task) return { ok: true, task: manager.get(request.task) };
-      return { ok: true, tasks: manager.list() };
+      return { ok: true, tasks: manager.list({ needsAttention: request.needsAttention }) };
     }
     if (request.command === "wait") {
       const waited = await manager.wait(required(request.task, "task"), timeoutMs);
@@ -196,7 +218,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       const events = raw
         .split(/\r?\n/)
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as { taskId?: string })
+        .map((line) => redact(JSON.parse(line)) as { taskId?: string })
         .filter((event) => !request.task || event.taskId === request.task);
       return { ok: true, events };
     }

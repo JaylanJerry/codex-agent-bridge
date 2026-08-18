@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { RuntimeDriver, RuntimeSession, TurnInput, WorkerProfile } from "../contract.ts";
+import type { RuntimeDriver, RuntimeSession, StartOptions, TurnInput, WorkerProfile } from "../contract.ts";
 import type { JobHandle } from "../../process/job-object.ts";
 
 type LiveSession = {
@@ -20,7 +20,11 @@ export class AcpRuntimeDriver implements RuntimeDriver {
   readonly kind = "acp" as const;
   private readonly live = new Map<string, LiveSession>();
 
-  async start(profile: WorkerProfile, worktreePath: string): Promise<RuntimeSession> {
+  async start(
+    profile: WorkerProfile,
+    worktreePath: string,
+    options?: StartOptions,
+  ): Promise<RuntimeSession> {
     const child = spawn(profile.launch.command, profile.launch.args, {
       cwd: profile.launch.cwd ?? worktreePath,
       env: { ...process.env, ...profile.launch.env },
@@ -90,12 +94,29 @@ export class AcpRuntimeDriver implements RuntimeDriver {
         clientCapabilities: {},
         clientInfo: { name: "agent-bridge", version: "0.5.0" },
       });
+      live.session.loadSession = Boolean(init.agentCapabilities?.loadSession);
+      const resumeId = options?.resumeSessionId;
+      if (resumeId && live.session.loadSession) {
+        try {
+          await live.connection.loadSession({
+            sessionId: resumeId,
+            cwd: worktreePath,
+            mcpServers: [],
+          });
+          live.session.id = resumeId;
+          live.session.resumed = true;
+          this.live.set(resumeId, live);
+          return live.session;
+        } catch {
+          // Agent advertised loadSession but this id could not be restored.
+        }
+      }
       const created = await live.connection.newSession({
         cwd: worktreePath,
         mcpServers: [],
       });
       live.session.id = created.sessionId;
-      live.session.loadSession = Boolean(init.agentCapabilities?.loadSession);
+      live.session.resumed = false;
       this.live.set(created.sessionId, live);
       return live.session;
     } catch (error) {

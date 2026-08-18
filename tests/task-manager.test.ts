@@ -8,6 +8,7 @@ import { Journal } from "../src/persistence/journal.ts";
 import { ReplayRuntimeDriver } from "../src/runtime/replay/driver.ts";
 import { TaskManager, StateVersionConflictError } from "../src/core/task-manager.ts";
 import { replayProfile } from "../src/workers/profiles.ts";
+import type { RuntimeDriver, RuntimeSession, StartOptions, TurnInput, WorkerProfile } from "../src/runtime/contract.ts";
 
 function git(cwd: string, args: string[]) {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
@@ -257,5 +258,66 @@ test("verify.json ids run by default and continue reuses them", async () => {
   const continued = manager.continue(first.taskId, "add note", first.stateVersion);
   const second = await manager.wait(continued.taskId);
   assert.equal(second.lastVerification?.passed, true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("hydrate continue passes persisted sessionId into driver.start", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-resume-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+
+  const starts: Array<StartOptions | undefined> = [];
+  const inner = new ReplayRuntimeDriver([
+    { stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } },
+    { stopReason: "end_turn", files: { "note.md": "revised\n" } },
+  ]);
+  const capturing: RuntimeDriver = {
+    kind: "replay",
+    start: async (profile: WorkerProfile, worktreePath: string, options?: StartOptions) => {
+      starts.push(options);
+      return inner.start(profile, worktreePath, options);
+    },
+    sendTurn: (session: RuntimeSession, input: TurnInput) => inner.sendTurn(session, input),
+    cancel: (session: RuntimeSession) => inner.cancel(session),
+    close: (session: RuntimeSession) => inner.close(session),
+  };
+  const journal = join(root, "journal.ndjson");
+  const firstManager = new TaskManager(
+    new Map([["replay", capturing]]),
+    new Map([["replay", replayProfile]]),
+    new Journal(journal),
+  );
+  const created = firstManager.run({
+    schemaVersion: "1.2",
+    clientRequestId: "resume-1",
+    objective: "bump",
+    projectPath: root,
+    workerId: "replay",
+  });
+  const first = await firstManager.wait(created.taskId);
+  assert.ok(first.sessionId);
+  assert.equal(first.sessionResumed, false);
+  assert.equal(starts[0]?.resumeSessionId, undefined);
+
+  const snapshot = firstManager.snapshot();
+  const secondManager = new TaskManager(
+    new Map([["replay", capturing]]),
+    new Map([["replay", replayProfile]]),
+    new Journal(journal),
+  );
+  secondManager.hydrate(snapshot);
+  assert.deepEqual(
+    secondManager.list({ needsAttention: true }).map((task) => task.taskId),
+    [first.taskId],
+  );
+  const continued = secondManager.continue(first.taskId, "add note", first.stateVersion);
+  const second = await secondManager.wait(continued.taskId);
+  assert.equal(starts.at(-1)?.resumeSessionId, first.sessionId);
+  assert.equal(second.sessionId, first.sessionId);
+  assert.equal(second.sessionResumed, true);
   rmSync(root, { recursive: true, force: true });
 });

@@ -27,11 +27,19 @@ export const claudeProfile = (launch: WorkerProfile["launch"]): WorkerProfile =>
   launch,
 });
 
-export function resolveClaudeLaunch(repoRoot: string): WorkerProfile["launch"] {
-  const adapter = join(
+export function claudeAdapterPath(repoRoot: string): string {
+  return join(
     repoRoot,
     "experiments/acp-claude/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
   );
+}
+
+export function deepSeekHarnessRoot(repoRoot: string): string {
+  return join(repoRoot, "references/deepseek-harness");
+}
+
+export function resolveClaudeLaunch(repoRoot: string): WorkerProfile["launch"] {
+  const adapter = claudeAdapterPath(repoRoot);
   if (!existsSync(adapter)) {
     throw new Error(`Claude ACP adapter missing: ${adapter}`);
   }
@@ -39,7 +47,7 @@ export function resolveClaudeLaunch(repoRoot: string): WorkerProfile["launch"] {
 }
 
 export function resolveDeepSeekLaunch(repoRoot: string): WorkerProfile["launch"] {
-  const harness = join(repoRoot, "references/deepseek-harness");
+  const harness = deepSeekHarnessRoot(repoRoot);
   const bin = join(harness, "packages/examples/acp-demo/src/bin.ts");
   const config = join(harness, "examples/acp-agent/cordis.yml");
   if (!existsSync(bin) || !existsSync(config)) {

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { RuntimeDriver, RuntimeSession, TurnInput, WorkerProfile } from "../contract.ts";
+import type { RuntimeDriver, RuntimeSession, StartOptions, TurnInput, WorkerProfile } from "../contract.ts";
 
 export type ReplayTurn = {
   stopReason: "end_turn" | "cancelled";
@@ -13,11 +13,16 @@ export class ReplayRuntimeDriver implements RuntimeDriver {
 
   constructor(private readonly script: ReplayTurn[]) {}
 
-  async start(profile: WorkerProfile, worktreePath: string): Promise<RuntimeSession> {
+  async start(
+    profile: WorkerProfile,
+    worktreePath: string,
+    options?: StartOptions,
+  ): Promise<RuntimeSession> {
     const session: RuntimeSession = {
-      id: `replay-${profile.id}-${Date.now()}`,
+      id: options?.resumeSessionId ?? `replay-${profile.id}-${Date.now()}`,
       profileId: profile.id,
       worktreePath,
+      resumed: Boolean(options?.resumeSessionId),
     };
     this.queues.set(session.id, [...this.script]);
     return session;
