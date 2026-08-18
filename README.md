@@ -84,6 +84,29 @@ DeepSeek Harness 如果不在常见路径，设置 `AGENT_BRIDGE_DEEPSEEK_ROOT`�
 
 ---
 
+## 发布新版本
+
+本地 `npm publish` 每次都会要 2FA，这是 npm 的规定，没法改成和 `git push` 一样免密。
+
+正确做法是：**改版本 → 打 tag → push**，GitHub Actions 用 Trusted Publishing 发 npm，不再输入密码。
+
+一次性配置（只需做一次）：打开 [codex-agent-bridge 的 npm 设置](https://www.npmjs.com/package/codex-agent-bridge/access) → **Trusted Publisher** → GitHub Actions，填：
+
+| 字段 | 值 |
+| --- | --- |
+| Organization or user | `JaylanJerry` |
+| Repository | `codex-agent-bridge` |
+| Workflow filename | `publish.yml` |
+| Allowed actions | `npm publish` |
+
+之后每次：
+
+```bash
+# 先改 package.json 里的 version，提交
+git tag v1.2.0
+git push origin main --tags
+```
+
 ## 从源码开发
 
 ```bash
