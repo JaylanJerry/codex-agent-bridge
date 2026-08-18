@@ -41,6 +41,7 @@ export class TaskManager {
   private readonly reviewHashes = new Map<string, string>();
   private readonly turns = new Map<string, Promise<void>>();
   private readonly permissionResolvers = new Map<string, (outcome: PermissionOutcome) => void>();
+  private readonly turnEpoch = new Map<string, number>();
   private permissionMode: PermissionMode = "auto";
 
   constructor(
@@ -124,12 +125,23 @@ export class TaskManager {
     const profile = this.profiles.get(task.workerId)!;
     const driver = this.drivers.get(profile.preferredRuntime)!;
     if (task.state !== "RUNNING") this.setState(task, "RUNNING");
-    const pending = this.runTurn(task, profile, driver, text, input);
+    const epoch = this.bumpEpoch(task.taskId);
+    const pending = this.runTurn(task, profile, driver, text, input, epoch);
     this.turns.set(task.taskId, pending);
     void pending.finally(() => {
       if (this.turns.get(task.taskId) === pending) this.turns.delete(task.taskId);
     });
     return task;
+  }
+
+  private bumpEpoch(taskId: string): number {
+    const next = (this.turnEpoch.get(taskId) ?? 0) + 1;
+    this.turnEpoch.set(taskId, next);
+    return next;
+  }
+
+  private isCurrentTurn(taskId: string, epoch: number): boolean {
+    return this.turnEpoch.get(taskId) === epoch;
   }
 
   setPermissionMode(mode: PermissionMode): void {
@@ -152,7 +164,8 @@ export class TaskManager {
     );
   }
 
-  private shouldAbortTurn(task: TaskRecord): boolean {
+  private shouldAbortTurn(task: TaskRecord, epoch?: number): boolean {
+    if (epoch !== undefined && !this.isCurrentTurn(task.taskId, epoch)) return true;
     return task.interrupted || this.settled(task);
   }
 
@@ -162,6 +175,7 @@ export class TaskManager {
     driver: RuntimeDriver,
     text: string,
     input?: BridgeTaskInput,
+    epoch = 0,
   ): Promise<void> {
     try {
       let session = this.sessions.get(task.taskId);
@@ -170,7 +184,7 @@ export class TaskManager {
         const started = await driver.start(profile, task.worktreePath ?? task.projectPath, {
           resumeSessionId: previousSessionId,
         });
-        if (this.shouldAbortTurn(task)) {
+        if (this.shouldAbortTurn(task, epoch)) {
           await driver.close(started).catch(() => undefined);
           return;
         }
@@ -192,6 +206,7 @@ export class TaskManager {
       }
       if (driver.setPermissionHandler) {
         driver.setPermissionHandler(session.sessionId, async (request) => {
+          if (!this.isCurrentTurn(task.taskId, epoch)) return { outcome: "cancelled" as const };
           if (this.permissionMode === "auto") return autoSelectPermission(request.options);
           return await new Promise<PermissionOutcome>((resolve) => {
             this.permissionResolvers.set(task.taskId, resolve);
@@ -210,7 +225,7 @@ export class TaskManager {
           },
           { sessionId: session.sessionId, text },
         );
-        if (this.shouldAbortTurn(task)) return;
+        if (this.shouldAbortTurn(task, epoch)) return;
         task.lastStopReason = result.stopReason;
         this.journal.append("worker-turn-finished", result, task.taskId);
         const verifyIds = task.verification?.enabled ? task.verification.verifyIds : [];
@@ -220,14 +235,16 @@ export class TaskManager {
           task.lastVerification = verification;
           this.journal.append("verification-result", verification, task.taskId);
         }
-        if (this.shouldAbortTurn(task)) return;
+        if (this.shouldAbortTurn(task, epoch)) return;
         this.setState(task, "AWAITING_REVIEW");
       } finally {
-        if (session) driver.setPermissionHandler?.(session.sessionId, undefined);
-        this.permissionResolvers.delete(task.taskId);
+        if (this.isCurrentTurn(task.taskId, epoch)) {
+          if (session) driver.setPermissionHandler?.(session.sessionId, undefined);
+          this.permissionResolvers.delete(task.taskId);
+        }
       }
     } catch (error) {
-      if (this.shouldAbortTurn(task)) return;
+      if (this.shouldAbortTurn(task, epoch)) return;
       task.interrupted = true;
       this.setState(task, "FAILED");
       this.journal.append("failed", { error: String(error) }, task.taskId);
@@ -241,7 +258,41 @@ export class TaskManager {
       if (this.waitReturned(task)) return task;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    throw new Error(`wait timed out for ${taskId}`);
+    return this.expireWait(taskId, timeoutMs);
+  }
+
+  private async expireWait(taskId: string, timeoutMs: number): Promise<TaskRecord> {
+    const task = this.require(taskId);
+    if (this.waitReturned(task)) return task;
+    task.interrupted = true;
+    task.lastStopReason = "wait_timeout";
+    this.bumpEpoch(task.taskId);
+    await this.stopSession(task);
+    if (["RUNNING", "STARTING", "VERIFYING", "WAITING_FOR_INPUT"].includes(task.state)) {
+      this.setState(task, "TASK_TIMED_OUT");
+    }
+    this.journal.append("wait-timeout", { timeoutMs }, task.taskId);
+    return task;
+  }
+
+  private async stopSession(task: TaskRecord): Promise<void> {
+    const resolver = this.permissionResolvers.get(task.taskId);
+    resolver?.({ outcome: "cancelled" });
+    this.permissionResolvers.delete(task.taskId);
+    task.pendingInput = undefined;
+    const session = this.sessions.get(task.taskId);
+    if (!session) return;
+    const driver = this.drivers.get(session.profile.preferredRuntime);
+    const handle = {
+      id: session.sessionId,
+      profileId: session.profile.id,
+      worktreePath: task.worktreePath ?? task.projectPath,
+    };
+    await driver?.cancel(handle).catch(() => undefined);
+    await driver?.close(handle).catch(() => undefined);
+    this.sessions.delete(task.taskId);
+    task.sessionId = undefined;
+    task.workerPid = undefined;
   }
 
   reviewPacket(taskId: string): ReviewPacket {
@@ -265,9 +316,12 @@ export class TaskManager {
   continue(taskId: string, notes: string, expectedStateVersion: number): TaskRecord {
     const task = this.require(taskId);
     this.assertVersion(task, expectedStateVersion);
-    if (task.state !== "AWAITING_REVIEW") throw new Error("continue requires AWAITING_REVIEW");
+    if (task.state !== "AWAITING_REVIEW" && task.state !== "TASK_TIMED_OUT") {
+      throw new Error("continue requires AWAITING_REVIEW or TASK_TIMED_OUT");
+    }
     task.verdict = "NEEDS_REVISION";
     task.reviewNotes = notes;
+    task.interrupted = false;
     this.setState(task, "RUNNING");
     this.startTurn(task, notes);
     return task;
@@ -341,21 +395,7 @@ export class TaskManager {
     const task = this.require(taskId);
     this.assertVersion(task, expectedStateVersion);
     task.interrupted = true;
-    const resolver = this.permissionResolvers.get(taskId);
-    resolver?.({ outcome: "cancelled" });
-    this.permissionResolvers.delete(taskId);
-    const session = this.sessions.get(taskId);
-    if (session) {
-      const driver = this.drivers.get(session.profile.preferredRuntime);
-      const handle = {
-        id: session.sessionId,
-        profileId: session.profile.id,
-        worktreePath: task.worktreePath ?? task.projectPath,
-      };
-      await driver?.cancel(handle).catch(() => undefined);
-      await driver?.close(handle).catch(() => undefined);
-      this.sessions.delete(taskId);
-    }
+    await this.stopSession(task);
     if (!["COMPLETED", "FAILED", "CANCELLED"].includes(task.state)) {
       this.setState(task, "CANCELLED");
     }

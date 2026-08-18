@@ -19,7 +19,7 @@ const tools = [
   {
     name: "bridge_run",
     description:
-      "Start an Agent Bridge task and wait until WAITING_FOR_INPUT or AWAITING_REVIEW. WAITING_FOR_INPUT is not completion — call bridge_respond. AWAITING_REVIEW is also not completion.",
+      "Start an Agent Bridge task and wait until WAITING_FOR_INPUT, AWAITING_REVIEW, or TASK_TIMED_OUT. None of these is completion. WAITING_FOR_INPUT needs bridge_respond. TASK_TIMED_OUT means the wait budget expired; worker is stopped and worktree is kept.",
     inputSchema: {
       type: "object",
       properties: {
@@ -30,7 +30,11 @@ const tools = [
         inPlace: { type: "boolean" },
         verifyIds: { type: "array", items: { type: "string" } },
         files: { type: "object", additionalProperties: { type: "string" } },
-        timeoutMs: { type: "number", description: "Wait budget in ms. Default 900000." },
+        timeoutMs: {
+          type: "number",
+          description:
+            "Wait budget in ms. Default 900000. On expiry the worker is stopped, worktree is kept, and state becomes TASK_TIMED_OUT.",
+        },
         permissionMode: {
           type: "string",
           enum: ["auto", "gate"],
@@ -61,7 +65,8 @@ const tools = [
   },
   {
     name: "bridge_wait",
-    description: "Wait until a task reaches WAITING_FOR_INPUT, AWAITING_REVIEW, or a terminal state.",
+    description:
+      "Wait until WAITING_FOR_INPUT, AWAITING_REVIEW, TASK_TIMED_OUT, or a terminal state. Wait budget expiry stops the worker and returns TASK_TIMED_OUT instead of throwing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -95,7 +100,8 @@ const tools = [
   },
   {
     name: "bridge_continue",
-    description: "Send revision notes to the same task. Requires expectedStateVersion.",
+    description:
+      "Send revision notes to the same task from AWAITING_REVIEW or TASK_TIMED_OUT. Requires expectedStateVersion.",
     inputSchema: {
       type: "object",
       properties: {

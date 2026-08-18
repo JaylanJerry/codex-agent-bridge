@@ -59,16 +59,16 @@ export type TaskRecord = {
 
 const allowed: Record<TaskState, TaskState[]> = {
   QUEUED: ["STARTING", "CANCELLED"],
-  STARTING: ["RUNNING", "FAILED", "CANCELLED"],
+  STARTING: ["RUNNING", "FAILED", "CANCELLED", "TASK_TIMED_OUT"],
   RUNNING: ["WAITING_FOR_INPUT", "VERIFYING", "AWAITING_REVIEW", "FAILED", "CANCELLED", "TASK_TIMED_OUT"],
-  WAITING_FOR_INPUT: ["RUNNING", "AWAITING_REVIEW", "FAILED", "CANCELLED"],
-  VERIFYING: ["AWAITING_REVIEW", "FAILED"],
+  WAITING_FOR_INPUT: ["RUNNING", "AWAITING_REVIEW", "FAILED", "CANCELLED", "TASK_TIMED_OUT"],
+  VERIFYING: ["AWAITING_REVIEW", "FAILED", "TASK_TIMED_OUT"],
   AWAITING_REVIEW: ["RUNNING", "FINALIZING", "FAILED", "CANCELLED"],
   FINALIZING: ["COMPLETED", "FAILED"],
   COMPLETED: [],
   FAILED: [],
   CANCELLED: [],
-  TASK_TIMED_OUT: [],
+  TASK_TIMED_OUT: ["RUNNING", "FAILED", "CANCELLED"],
 };
 
 export function transition(current: TaskState, next: TaskState): TaskState {
@@ -79,7 +79,7 @@ export function transition(current: TaskState, next: TaskState): TaskState {
 }
 
 export function isTerminalState(state: TaskState): boolean {
-  return state === "COMPLETED" || state === "FAILED" || state === "CANCELLED" || state === "TASK_TIMED_OUT";
+  return state === "COMPLETED" || state === "FAILED" || state === "CANCELLED";
 }
 
 export function needsAttention(task: TaskRecord): boolean {

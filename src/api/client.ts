@@ -190,7 +190,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
 
     const finish = async (taskId: string) => {
       const waited = await manager.wait(taskId, timeoutMs);
-      if (waited.state === "AWAITING_REVIEW") {
+      if (waited.state === "AWAITING_REVIEW" || waited.state === "TASK_TIMED_OUT") {
         const reviewPacket = manager.reviewPacket(taskId);
         persist();
         return { ok: true as const, task: waited, reviewPacket };

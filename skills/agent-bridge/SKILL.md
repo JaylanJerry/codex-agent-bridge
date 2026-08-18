@@ -26,6 +26,7 @@ MCP server 名：`agent-bridge`
 ```text
 bridge_run
 → 若 state=WAITING_FOR_INPUT：读 pendingInput.options，bridge_respond（optionId + stateVersion）
+→ 若 state=TASK_TIMED_OUT：wait 预算到了，Worker 已停，worktree 保留。读 ReviewPacket，然后 continue 或 reject
 → 重复直到 AWAITING_REVIEW
 → 读 structuredContent.reviewPacket（含 verification）
 → verification.passed=false 时不要 approve，除非用户明确要求
@@ -43,7 +44,9 @@ bridge_run
 
 `clientRequestId` 相同且内容相同会返回同一 task；内容不同会 `TASK_ALREADY_EXISTS`。
 
-MCP 默认 `permissionMode=gate`：Worker 要写文件/跑命令时会停在 `WAITING_FOR_INPUT`，不要自动当任务完成。选 `allow_once`，除非用户明确禁止。没有 live waiter 时（Core 重启）不要 respond，改 `bridge_continue`。
+MCP 默认 `permissionMode=gate`：Worker 要写文件/跑命令时会停在 `WAITING_FOR_INPUT`，不要自动当任务完成。选 `allow_once`，除非用户明确禁止。optionId 以 `pendingInput.options` 为准（Claude 可能是 `allow` 而不是 `allow-once`）。没有 live waiter 时（Core 重启）不要 respond，改 `bridge_continue`。
+
+`timeoutMs` 到期会停 Worker、保留 worktree，状态变成 `TASK_TIMED_OUT`。这不是完成。可以 `bridge_continue` 或 `bridge_reject`。
 
 CLI 默认 auto（一次进程无法跨调用停闸）。
 

@@ -77,9 +77,10 @@ MCP stdio server 已提供与 CLI 相同的命令，走 `src/api/client.ts`。�
 QUEUED → STARTING → RUNNING → WAITING_FOR_INPUT? → VERIFYING? → AWAITING_REVIEW
 RUNNING ↔ WAITING_FOR_INPUT     # permission gate / respond
 AWAITING_REVIEW → RUNNING          # continue
+TASK_TIMED_OUT → RUNNING           # continue after wait budget
 AWAITING_REVIEW → FINALIZING → COMPLETED  # approve
 任意允许边 → FAILED / CANCELLED
-RUNNING → TASK_TIMED_OUT
+RUNNING / STARTING / VERIFYING / WAITING_FOR_INPUT → TASK_TIMED_OUT  # wait 预算到期，停 Worker，保留 worktree
 ```
 
 MCP 默认 `permissionMode=gate`：ACP `requestPermission` 进入 `WAITING_FOR_INPUT`，Codex 调 `bridge_respond`。CLI 默认 `auto`（选 `allow_once`）。Core 重启后 live waiter 消失，hydrate 把 `WAITING_FOR_INPUT` 收成 `AWAITING_REVIEW` + `interrupted`，用 `continue` 而不是 `respond`。
@@ -155,10 +156,10 @@ npm test
 
 ## 6. 下一步（Phase 2 剩余）
 
-已落地本轮：`doctor` / `agents` / `version`、needs-attention、journal redaction、Claude `session/load`、`prune`、MCP Core 单例、`WAITING_FOR_INPUT` + `bridge_respond` permission 闸。
+已落地本轮：`doctor` / `agents` / `version`、needs-attention、journal redaction、Claude `session/load`、`prune`、MCP Core 单例、`WAITING_FOR_INPUT` + `bridge_respond` permission 闸、wait 预算 → `TASK_TIMED_OUT`。
 
 仍未做：
 
 1. ACP interactive question 全文（非 permission 的提问）
 2. loopback HTTP Core daemon + SQLite
-3. Session TTL / stall 检测
+3. Session TTL / 无事件 stall 探测（目前只按 `timeoutMs` 硬截止）
