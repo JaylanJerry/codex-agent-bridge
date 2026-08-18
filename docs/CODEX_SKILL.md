@@ -1,53 +1,25 @@
-# Codex Skill：Agent Bridge
+# Agent Bridge Codex 接入
 
-Codex 是 Supervisor。Worker 是外部完整 Coding Agent。Bridge **不调用 LLM**。
+## MCP（已用 `codex mcp add` 注册）
 
-启动 MCP：
+```toml
+[mcp_servers.agent-bridge]
+command = 'C:\Program Files\nodejs\node.exe'
+args = ["--import", "tsx", 'C:\Users\jjbon\Documents\Codex\Agent Relay\src\mcp\server.ts']
+cwd = 'C:\Users\jjbon\Documents\Codex\Agent Relay'
+startup_timeout_sec = 30
 
-```text
-node --import tsx src/mcp/server.ts
+[mcp_servers.agent-bridge.env]
+NODE_PATH = 'C:\Users\jjbon\Documents\Codex\Agent Relay\node_modules'
 ```
 
-工作目录必须是 Agent Bridge 仓库根，或把 `tsx`/`src` 写成绝对路径。Windows 不要 spawn `.cmd`。
+Windows 不要用 `npx.cmd` / `tsx.cmd`。改完配置后需要新开一轮 Codex 才会看到工具。
 
----
-
-## 什么时候委派
-
-用户要改一个 git 仓库，且应该由 **Claude Code 或 DeepSeek Harness** 执行，而不是 Codex 自己改文件。
-
-## 什么时候不要用 Bridge
-
-- 只问问题、读代码、做设计；
-- 没有 git 仓库；
-- 需要 OpenCode（当前 DEFERRED）；
-- 只要 Codex 自己改当前工作区。
-
----
-
-## 闭环
+本地自检：
 
 ```text
-bridge_run
-→ 等待 AWAITING_REVIEW（run 已 wait）
-→ 读 structuredContent.reviewPacket
-→ 不通过：bridge_continue（带 notes + stateVersion）
-→ 再读 ReviewPacket
-→ 通过：bridge_approve（带 stateVersion）
-→ 检查 approvedCommit 在任务分支，不要 merge 主分支
+npm run mcp:smoke
 ```
 
-破坏性调用必须带 **当前** `task.stateVersion`。冲突时不要重试旧版本。
-
-`clientRequestId` 相同且内容相同会返回同一 task；内容不同会 `TASK_ALREADY_EXISTS`。
-
----
-
-## 硬规则
-
-- turn 结束 ≠ 任务完成；
-- 不要让 Worker commit / push / merge / rebase；
-- 不要用 `base..HEAD` 当 diff；以 ReviewPacket / `bridge_diff` 为准；
-- 不要信 Worker 自称测过；验证只认 `.agent-bridge/verify.json` 的 verifyId；
-- crash / 死 pid：不要 reattach；看 `interrupted`，必要时 `bridge_continue` 做 REHYDRATE；
-- DeepSeek 没有 `session/load`；Claude 可以 cold load。
+Skill 源文件：`skills/agent-bridge/SKILL.md`  
+用户级副本：`~/.codex/skills/agent-bridge/SKILL.md`
