@@ -1,0 +1,22 @@
+{
+  "name": "acp-deepseek-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "probe": "tsx src/probe.ts",
+    "cancel": "tsx src/cancel-probe.ts",
+    "opencode": "tsx src/opencode-smoke.ts",
+    "opencode:prompt": "tsx src/opencode-prompt.ts",
+    "claude": "tsx src/claude-smoke.ts",
+    "claude:two-turn": "tsx src/claude-two-turn.ts",
+    "claude:cancel": "tsx src/claude-cancel.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.25.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.2"
+  }
+}

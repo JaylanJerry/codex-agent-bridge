@@ -1,0 +1,144 @@
+# Agent Bridge 技术设计 V0.5
+
+**状态：** Implementation Frozen Baseline  
+**日期：** 2026-08-18  
+**上级文档：** `Agent_Bridge_Technical_Design_V0.4.md`（架构决策仍有效）  
+**仓库：** `C:\Users\jjbon\Documents\Codex\Agent Relay`
+
+V0.4 仍是架构基线。V0.5 冻结 **Phase 0 实测结论** 和 **Phase 1 已实现接口**。实现以本文件与 `src/` 为准；与 V0.4 草稿冲突时，以本文件为准。
+
+---
+
+## 1. Phase 0 冻结结论
+
+| 项 | 结论 |
+|---|---|
+| DeepSeek Harness ACP | **CONDITIONAL GO**：initialize / session / 两轮 prompt / `end_turn` / permission / cancel 均过。Windows 上 Worker 不能当测试执行器（bash `E_ACCESSDENIED`，无 WSL）。无 `session/load`。 |
+| Claude Code ACP | **GO**：两轮改代码 + 真跑 `npm test` + cancel + permission + usage。`session/load` 跨进程 cold resume 成功。 |
+| OpenCode | **DEFERRED**。不要再加 Profile，直到 DeepSeek + Claude Core 稳定。 |
+| ACP Runtime | **GO**。同一个 `@agentclientprotocol/sdk` Client 驱动多个 Worker。抽象是 Runtime Driver + Worker Profile，不是每家一套 Adapter。 |
+| Codex 入口 | **MCP 优先，CLI 永久保留**。live A/B 均 exit 0。Windows CLI 多一层 PowerShell quoting。 |
+| Diff | 必须比较 `baseCommit` 与当前 worktree。禁止把 `base..HEAD` 当变更来源。 |
+| Verification | 只跑 `.agent-bridge/verify.json` 的 `verifyId`。不信 Worker 自称测过。 |
+| Ownership | `bridge-owned` 在 Windows 上用 Job Object `KILL_ON_JOB_CLOSE`。`external-owned` 不断开后仍活，Bridge 不得杀。 |
+| Crash | worktree / journal 保留。不 reattach 死 pid。标 `interrupted` 并进入 `AWAITING_REVIEW`。 |
+| Resume | Claude：允许 `session/load`。DeepSeek：只能 **REHYDRATE**（新 session + 目标/备注/worktree 现状）。 |
+| Packaging | **Node-compatible**。本机 Node v24.18.0 可加载 ACP SDK。不锁 Bun。 |
+| Core 智能 | Bridge **绝不调用 LLM**。 |
+
+Worker 范围：只稳定 **DeepSeek Harness** 与 **Claude Code**。
+
+---
+
+## 2. 冻结的实现接口
+
+### 2.1 CLI（与 TaskManager 共用同一 Core）
+
+已实现：
+
+```text
+run
+status
+wait
+review-packet
+diff
+approve
+continue
+reject
+cancel
+logs
+```
+
+未实现（Phase 2/3）：`respond`、`doctor`、`agents`、`version`、MCP、loopback HTTP daemon。
+
+破坏性命令必须带 `--state-version`。不匹配则 `STATE_VERSION_CONFLICT`。
+
+`run` 必须带 `clientRequestId`（CLI 可用 `--client-request-id`；缺省生成）。内容相同返回同 taskId；内容不同 `TASK_ALREADY_EXISTS`。
+
+### 2.2 状态机（Phase 1）
+
+```text
+QUEUED → STARTING → RUNNING → VERIFYING? → AWAITING_REVIEW
+AWAITING_REVIEW → RUNNING          # continue
+AWAITING_REVIEW → FINALIZING → COMPLETED  # approve
+任意允许边 → FAILED / CANCELLED
+RUNNING → TASK_TIMED_OUT
+```
+
+V0.4 的 `WAITING_FOR_APPROVAL` / `WAITING_FOR_INPUT` **推迟到 Phase 2**（interactive question / permission 人工闸）。Phase 1 permission 由 Runtime 自动选 `allow_once`。
+
+Turn 结束 ≠ 任务完成。只有 Codex `approve` 后才 `COMPLETED`。
+
+### 2.3 Runtime
+
+```text
+ReplayRuntimeDriver   # 测试与 CLI 无 LLM 闭环
+AcpRuntimeDriver      # DeepSeek / Claude / fake ACP
+```
+
+`WorkerProfile.launch.cwd` 是 **进程 cwd**（DeepSeek 必须是 harness 根）。`session/new` 的 `cwd` 永远是 **task worktree**。
+
+Windows 上不要 spawn `.cmd`（EINVAL）。用 `node.exe` 或真实 `.exe`。
+
+Claude 适配器路径相对于仓库，不要 `resolve("../../acp-claude")` 相对 cwd。
+
+### 2.4 Workspace
+
+- 默认 `git worktree add agent-bridge/<taskId> -b agent-bridge/<taskId>`
+- Worker 不得 commit / push / merge / rebase
+- `approve` 只在任务分支打 checkpoint commit（`git -c user.name=agent-bridge`，不改用户 git config）
+- 不自动合并主分支
+
+### 2.5 ReviewPacket
+
+无 LLM。字段：objective、acceptanceCriteria、workerStopReason、verification、diffstat、changedFiles、warnings。
+
+`approve` 前若 ChangeSet hash 与最近一次 `review-packet` 不一致 → `review drift`，拒绝执行。
+
+---
+
+## 3. Resume 策略（冻结）
+
+```text
+Claude Code
+  live session  → 同进程第二轮 prompt
+  cold resume   → session/load（已实测）
+  crash         → 不 reattach pid；AWAITING_REVIEW + interrupted
+                 Codex 决定 continue（可尝试 load，失败则 REHYDRATE）
+
+DeepSeek Harness
+  live session  → 同进程第二轮 prompt
+  cold resume   → 无 session/load → 只能 REHYDRATE
+  crash         → 同上，不假装会话还在
+```
+
+---
+
+## 4. Phase 1 已有测试（必须保持绿）
+
+```text
+npm test
+```
+
+覆盖：状态机、ChangeCollector（含 leading-space porcelain）、worktree checkpoint、replay 两轮+approve、幂等、crash drain、review drift、cancel、verify allowlist、Job Object kill-on-close、fake ACP write+cancel、CLI run/continue/approve。
+
+---
+
+## 5. 明确仍不做
+
+- OpenCode Profile
+- GUI
+- 完整 SQLite / HTTP Core daemon
+- 改用户全局 git config
+- Bridge 调 LLM
+- 把 `base..HEAD` 当 diff
+- 信任 Worker 的测试输出替代 Verification Runner
+
+---
+
+## 6. 下一步（Phase 2 之前可继续的 Phase 1 收尾）
+
+1. live DeepSeek / Claude 走 `AcpRuntimeDriver` 的 fixture 闭环（需本机密钥，不在 CI 默认跑）
+2. `cancel` 命令接到 Runtime + Job Object
+3. Codex MCP server（Phase 3）
+4. Core restart 后从 journal/tasks.json 恢复（文件快照已有，缺 daemon）

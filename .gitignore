@@ -6,3 +6,12 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+references/
+experiments/**/.sessions/
+experiments/**/.tmp/
+experiments/**/.state/
+experiments/process-ownership/*.exe
+phase0/artifacts/
+.agent-bridge-data/
+
+

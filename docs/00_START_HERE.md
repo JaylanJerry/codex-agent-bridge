@@ -1,7 +1,7 @@
 # Agent Bridge 最终开发指导
 
 **版本：** 2026-08-18 / Final Guidance  
-**建议文档基线：** `Agent_Bridge_Technical_Design_V0.4.md`
+**建议文档基线：** `Agent_Bridge_Technical_Design_V0.5.md`（架构决策见 V0.4）
 
 ---
 
@@ -168,28 +168,16 @@ turn结束
 ## 7. 文档阅读顺序
 
 1. `00_START_HERE.md`
-2. `Agent_Bridge_Technical_Design_V0.4.md`
-3. `PHASE0_VALIDATION_PLAN.md`
-4. `IMPLEMENTATION_ROADMAP.md`
-5. `REFERENCE_PROJECTS_AND_REUSE.md`
+2. `Agent_Bridge_Technical_Design_V0.5.md`
+3. `Agent_Bridge_Technical_Design_V0.4.md`
+4. `phase0-findings.md`
+5. `capability-matrix.md`
+6. `IMPLEMENTATION_ROADMAP.md`
 
 ---
 
-## 8. Phase 0后再冻结的事项
+## 8. Phase 0 已冻结
 
-- DeepSeek Harness ACP真实Capability；
-- cold resume；
-- interactive question；
-- Codex MCP与CLI审批/超时差异；
-- Windows Credential Store具体实现；
-- Bun单文件编译是否兼容native依赖；
-- 是否需要ConPTY。
+已生成 `docs/capability-matrix.md`、`docs/phase0-findings.md`，技术设计已升为 `Agent_Bridge_Technical_Design_V0.5.md`。
 
-Phase 0结束必须生成：
-
-```text
-docs/capability-matrix.md
-docs/phase0-findings.md
-```
-
-然后再把技术设计升为V0.5 Implementation Frozen Baseline。
+仍推迟：interactive question 人工闸、Windows Credential Store 具体实现、Bun 单文件、ConPTY。
