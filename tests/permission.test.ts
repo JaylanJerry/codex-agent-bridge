@@ -88,34 +88,40 @@ test("permission gate pauses for respond then writes after allow", async () => {
   }
 });
 
-test("hydrate recovers WAITING_FOR_INPUT without a live waiter", () => {
+test("hydrate recovers in-flight states without a live worker", () => {
   const root = mkdtempSync(join(tmpdir(), "ab-perm-hyd-"));
-  const manager = new TaskManager(new Map(), new Map(), new Journal(join(root, "journal.ndjson")));
-  manager.hydrate({
-    tasks: [
-      {
-        taskId: "dead-perm",
-        clientRequestId: "x",
-        state: "WAITING_FOR_INPUT",
-        stateVersion: 3,
-        verdict: null,
-        interrupted: false,
-        objective: "x",
-        projectPath: root,
-        workerId: "fake",
-        pendingInput: {
-          kind: "permission",
+  for (const state of ["QUEUED", "STARTING", "RUNNING", "VERIFYING", "WAITING_FOR_INPUT"] as const) {
+    const manager = new TaskManager(new Map(), new Map(), new Journal(join(root, `journal-${state}.ndjson`)));
+    manager.hydrate({
+      tasks: [
+        {
+          taskId: `dead-${state}`,
+          clientRequestId: "x",
+          state,
+          stateVersion: 3,
+          verdict: null,
+          interrupted: false,
+          objective: "x",
+          projectPath: root,
+          workerId: "fake",
           sessionId: "s",
-          options: [{ optionId: "allow-once", kind: "allow_once", name: "Allow once" }],
+          pendingInput:
+            state === "WAITING_FOR_INPUT"
+              ? {
+                  kind: "permission",
+                  sessionId: "s",
+                  options: [{ optionId: "allow-once", kind: "allow_once", name: "Allow once" }],
+                }
+              : undefined,
         },
-      },
-    ],
-    byRequest: [],
-    reviewHashes: [],
-  });
-  const recovered = manager.get("dead-perm");
-  assert.equal(recovered.state, "AWAITING_REVIEW");
-  assert.equal(recovered.interrupted, true);
-  assert.equal(recovered.pendingInput, undefined);
+      ],
+      byRequest: [],
+      reviewHashes: [],
+    });
+    const recovered = manager.get(`dead-${state}`);
+    assert.equal(recovered.state, "AWAITING_REVIEW", state);
+    assert.equal(recovered.interrupted, true, state);
+    assert.equal(recovered.pendingInput, undefined, state);
+  }
   rmSync(root, { recursive: true, force: true });
 });

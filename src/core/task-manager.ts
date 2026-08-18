@@ -44,11 +44,21 @@ export class TaskManager {
   private readonly turnEpoch = new Map<string, number>();
   private permissionMode: PermissionMode = "auto";
 
+  private persistHook: (() => void) | undefined;
+
   constructor(
     private readonly drivers: Map<string, RuntimeDriver>,
     private readonly profiles: Map<string, WorkerProfile>,
     private readonly journal: Journal,
   ) {}
+
+  setPersist(hook: () => void): void {
+    this.persistHook = hook;
+  }
+
+  private persist(): void {
+    this.persistHook?.();
+  }
 
   hydrate(snapshot: TaskSnapshot): void {
     this.tasks.clear();
@@ -56,16 +66,21 @@ export class TaskManager {
     this.reviewHashes.clear();
     this.worktrees.clear();
     this.sessions.clear();
+    this.permissionResolvers.clear();
+    this.turnEpoch.clear();
     for (const task of snapshot.tasks) this.tasks.set(task.taskId, { ...task });
     for (const [requestId, taskId] of snapshot.byRequest) this.byRequest.set(requestId, taskId);
     for (const [taskId, hash] of snapshot.reviewHashes) this.reviewHashes.set(taskId, hash);
-    this.permissionResolvers.clear();
-    for (const task of this.tasks.values()) {
-      if (task.state !== "WAITING_FOR_INPUT") continue;
-      task.interrupted = true;
-      task.pendingInput = undefined;
-      this.setState(task, "AWAITING_REVIEW");
+    for (const task of this.tasks.values()) this.recoverInFlight(task);
+  }
+
+  private recoverInFlight(task: TaskRecord): void {
+    if (!["QUEUED", "STARTING", "RUNNING", "VERIFYING", "WAITING_FOR_INPUT"].includes(task.state)) {
+      return;
     }
+    task.interrupted = true;
+    task.pendingInput = undefined;
+    this.setState(task, "AWAITING_REVIEW");
   }
 
   snapshot(): TaskSnapshot {
@@ -203,6 +218,7 @@ export class TaskManager {
           },
           task.taskId,
         );
+        this.persist();
       }
       if (driver.setPermissionHandler) {
         driver.setPermissionHandler(session.sessionId, async (request) => {
@@ -407,9 +423,7 @@ export class TaskManager {
     const task = this.require(taskId);
     task.workerPid = workerPid;
     task.interrupted = true;
-    if (["RUNNING", "STARTING", "VERIFYING", "WAITING_FOR_INPUT"].includes(task.state)) {
-      this.setState(task, "AWAITING_REVIEW");
-    }
+    this.recoverInFlight(task);
     return task;
   }
 
@@ -486,6 +500,7 @@ export class TaskManager {
     task.state = transition(task.state, next);
     task.stateVersion += 1;
     this.journal.append("state-changed", { state: task.state, stateVersion: task.stateVersion }, task.taskId);
+    this.persist();
   }
 }
 

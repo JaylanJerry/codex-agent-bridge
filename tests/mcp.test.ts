@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -144,6 +144,62 @@ test("MCP permission gate keeps the live waiter across bridge_respond", async ()
       stateVersion: reviewed.task!.stateVersion,
     });
     assert.equal((cancelled.structuredContent as BridgeResult).task?.state, "CANCELLED");
+  } finally {
+    client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MCP hydrates leftover RUNNING into AWAITING_REVIEW and persists it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-mcp-hyd-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "README.md"), "base\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  mkdirSync(join(root, ".agent-bridge-data"), { recursive: true });
+  writeFileSync(
+    join(root, ".agent-bridge-data", "tasks.json"),
+    `${JSON.stringify(
+      {
+        tasks: [
+          {
+            taskId: "dead-run",
+            clientRequestId: "hyd-1",
+            state: "RUNNING",
+            stateVersion: 4,
+            verdict: null,
+            interrupted: false,
+            objective: "x",
+            projectPath: root,
+            workerId: "replay",
+            sessionId: "replay-old",
+          },
+        ],
+        byRequest: [["hyd-1", "dead-run"]],
+        reviewHashes: [],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  const client = new McpStdioClient();
+  try {
+    await client.initialize();
+    const status = await client.callTool("bridge_status", { project: root, needsAttention: true });
+    const listed = status.structuredContent as BridgeResult;
+    assert.equal(status.isError, false);
+    assert.equal(listed.tasks?.length, 1);
+    assert.equal(listed.tasks?.[0]?.state, "AWAITING_REVIEW");
+    assert.equal(listed.tasks?.[0]?.interrupted, true);
+    assert.equal(listed.tasks?.[0]?.sessionId, "replay-old");
+    const saved = JSON.parse(readFileSync(join(root, ".agent-bridge-data", "tasks.json"), "utf8")) as {
+      tasks: { state: string; interrupted: boolean }[];
+    };
+    assert.equal(saved.tasks[0]?.state, "AWAITING_REVIEW");
+    assert.equal(saved.tasks[0]?.interrupted, true);
   } finally {
     client.close();
     rmSync(root, { recursive: true, force: true });

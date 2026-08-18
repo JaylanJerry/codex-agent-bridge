@@ -63,7 +63,7 @@ MCP stdio server 已提供与 CLI 相同的命令，走 `src/api/client.ts`。�
 
 `doctor` 检查 git / Node / Job Object / Worker 适配器 / **凭证是否存在（不打印值）** / Codex MCP 注册；若给了 `project`，再检查 `verify.json` 和遗留 `agent-bridge/` worktree。终态任务占用的 worktree 也算遗留。`prune` / `bridge_prune` 拆掉这些 worktree，保留任务分支。
 
-`continue` 在 Core 重启后会把持久化的 `sessionId` 传给 Runtime：Claude 走 `session/load`，失败则 `session/new` + REHYDRATE。DeepSeek 无 load，直接 REHYDRATE。Journal 写入前脱敏。
+`continue` 在 Core 重启后会把持久化的 `sessionId` 传给 Runtime：Claude 走 `session/load`，失败则 `session/new` + REHYDRATE。DeepSeek 无 load，直接 REHYDRATE。Journal 写入前脱敏。hydrate 时 `QUEUED` / `STARTING` / `RUNNING` / `VERIFYING` / `WAITING_FOR_INPUT` 一律收成 `AWAITING_REVIEW` + `interrupted`（没有 live Worker）。状态变化会立刻写入 `tasks.json`。
 
 `approve` 后会拆掉 task worktree，checkpoint 留在任务分支。`apply` 把 `approvedCommit` cherry-pick 到 `project` 当前分支，**不是 merge**。
 
@@ -156,9 +156,9 @@ npm test
 
 ## 6. 下一步（Phase 2 剩余）
 
-已落地本轮：`doctor` / `agents` / `version`、needs-attention、journal redaction、Claude `session/load`、`prune`、MCP Core 单例、`WAITING_FOR_INPUT` + `bridge_respond` permission 闸、wait 预算 → `TASK_TIMED_OUT`。
+已落地本轮：`doctor` / `agents` / `version`、needs-attention、journal redaction、Claude `session/load`、`prune`、MCP Core 单例、`WAITING_FOR_INPUT` + `bridge_respond` permission 闸、wait 预算 → `TASK_TIMED_OUT`、hydrate 收 in-flight + 状态落盘。
 
-仍未做：
+仍未做（明确推迟）：
 
 1. ACP interactive question 全文（非 permission 的提问）
 2. loopback HTTP Core daemon + SQLite

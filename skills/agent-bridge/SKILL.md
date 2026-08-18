@@ -50,7 +50,7 @@ MCP 默认 `permissionMode=gate`：Worker 要写文件/跑命令时会停在 `WA
 
 CLI 默认 auto（一次进程无法跨调用停闸）。
 
-掉线后先 `bridge_status`（`needsAttention: true`）或 `bridge_doctor`。`doctor` 标出遗留 worktree 时用 `bridge_prune`。
+掉线后先 `bridge_status`（`needsAttention: true`）或 `bridge_doctor`。Core 重启会把 `QUEUED` / `STARTING` / `RUNNING` / `VERIFYING` / `WAITING_FOR_INPUT` 收成 `AWAITING_REVIEW` + `interrupted`，不要 respond，改 `bridge_continue`（Claude 可尝试 `session/load`）。`doctor` 标出遗留 worktree 时用 `bridge_prune`。
 
 ## 硬规则
 
@@ -60,6 +60,6 @@ CLI 默认 auto（一次进程无法跨调用停闸）。
 - 不要信 Worker 自称测过；验证只认 `.agent-bridge/verify.json` 的 verifyId
 - approve 后 worktree 会拆掉，checkpoint 留在任务分支；落到当前分支用 `bridge_apply`（cherry-pick）
 - 不要 merge
-- crash / 死 pid：不要 reattach；看 `interrupted`。`bridge_continue` 会尝试 Claude `session/load`；失败或 DeepSeek 则 REHYDRATE
+- crash / 死 pid / MCP 进程退出：不要 reattach 死 pid。hydrate 后看 `interrupted`。`bridge_continue` 会尝试 Claude `session/load`；失败或 DeepSeek 则 REHYDRATE
 - DeepSeek 没有 `session/load`；Claude 可以 cold load
 - `bridge_logs` / journal 会脱敏，不要把密钥写进 notes

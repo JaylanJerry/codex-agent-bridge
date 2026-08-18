@@ -146,7 +146,9 @@ function getCore(
     profiles.set("fake", fakeAcpProfile(repoRoot));
   }
   const manager = new TaskManager(drivers, profiles, new Journal(join(dir, "journal.ndjson")));
+  manager.setPersist(() => store.save(manager.snapshot()));
   manager.hydrate(snapshot);
+  store.save(manager.snapshot());
   const slot = { manager, store, drivers, profiles };
   cores.set(key, slot);
   return slot;

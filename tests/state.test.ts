@@ -15,6 +15,8 @@ test("approve path", () => {
 });
 
 test("rejects illegal jumps", () => {
+  assert.equal(transition("QUEUED", "AWAITING_REVIEW"), "AWAITING_REVIEW");
+  assert.equal(transition("STARTING", "AWAITING_REVIEW"), "AWAITING_REVIEW");
   assert.equal(transition("RUNNING", "TASK_TIMED_OUT"), "TASK_TIMED_OUT");
   assert.equal(transition("TASK_TIMED_OUT", "RUNNING"), "RUNNING");
   assert.throws(() => transition("COMPLETED", "RUNNING"));
