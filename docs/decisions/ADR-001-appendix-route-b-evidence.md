@@ -1,8 +1,7 @@
 # ADR-001 Appendix: Route B Evidence
 
 **日期：** 2026-08-19  
-**性质：** 实现审计。不改代码。不讨论路线 A/B。不建议 Bridge 调用 LLM。  
-**主文：** `docs/decisions/ADR-001-post-mvp-direction.md`（Proposed）
+**主文状态：** ADR-001 **Accepted**（路线 B）。本附录仍是实现审计，不改代码。
 
 证据标记：`PROVEN` = 当前代码/测试/commit 支持；`UNPROVEN` = 无测试或无运行时观测。
 

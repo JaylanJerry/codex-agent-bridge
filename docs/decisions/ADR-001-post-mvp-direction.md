@@ -2,29 +2,68 @@
 
 ## Status
 
-Proposed（待审核，尚未采纳）
-
-路线 B 实现审计附录（6 问）：`docs/decisions/ADR-001-appendix-route-b-evidence.md`
+Accepted
 
 ## Date
 
-2026-08-19
+2026-08-19（Proposed 同日；Accepted 2026-08-19）
 
-## 本文用途
-
-给外部审核者（含 GPT）一份**可独立阅读**的材料，在两条路线里选一条，或提出有证据的第三条。
-
-不要根据这份文档改代码。先做路线裁决。
-
-仓库：`C:\Users\jjbon\Documents\Codex\Agent Relay`  
-当前版本：`0.5.0`（`package.json`）  
-基线文档：`docs/Agent_Bridge_Technical_Design_V0.5.md`  
-架构原稿：`docs/Agent_Bridge_Technical_Design_V0.4.md`  
-路线图：`docs/IMPLEMENTATION_ROADMAP.md`
+证据附录：`docs/decisions/ADR-001-appendix-route-b-evidence.md`
 
 ---
 
-## 1. 产品不变约束（审核时不得推翻）
+## Decision
+
+**采纳路线 B — MCP stdio 为 V1 基线。**
+
+当前问题是文件协议和生命周期恢复问题，不是缺 HTTP daemon 或 SQLite。已验证的 Codex MCP 闭环方向不被推翻。
+
+- V1 内核 = 现有 MCP stdio Core + `tasks.json` / ndjson journal + worktree / verify / approve / apply
+- **HTTP daemon、SQLite、GUI、单文件 EXE：推迟，不是取消。** 重新开启需要新证据并另写 ADR-002
+- 可分发 V1 **必须**通过下方 Release Gates（P0 阻塞发布；P1 不阻塞本 ADR 接受）
+
+OpenCode 及其他 Agent 后接，只加 Profile，不作为本 ADR 范围。
+
+---
+
+## V1 Release Gates
+
+### P0（阻塞可分发 V1；不阻塞本 ADR 已 Accepted）
+
+- [ ] **跨进程单写者，fail-closed**  
+  一个 `project/.agent-bridge-data` 同一时刻最多一个 Writer Core。`cores` Map 只覆盖本进程，不足。第二写者（另一 MCP 进程或 CLI）必须立即 `CORE_LOCK_HELD`：**不得 hydrate、不得写 `tasks.json`**。完成后路线 B 的「单 MCP Core 产品模型」才成立。
+- [ ] **`tasks.json` 原子持久化 + 损坏 fail-closed**  
+  `write temp` → 完整写入成功 → atomic replace。`JSON.parse` 失败 **不得** 变成 `tasks: []`，必须 `TASK_STORE_CORRUPTED`（或等价）。不需要 SQLite。
+- [ ] **`FINALIZING` 确定性崩溃恢复**  
+  hydrate / `needsAttention` 必须看见它。区分：checkpoint 未创建；checkpoint 已有但 COMPLETED 未持久化；COMPLETED 已持久化但 worktree 未拆。确定性恢复，不猜测。不需要 HTTP/SQLite。
+
+### P1（不阻塞 ADR 接受；发布前应做）
+
+- [ ] `apply` 中途崩溃 / 幂等故障注入（cherry-pick 成功但 `appliedHead` 未 persist；kill 留下 cherry-picking 状态）。apply 改用户当前仓库，对外发布前必须测。属路线 B 可靠性，不是改走 HTTP/SQLite 的理由
+- [ ] 同 Task 并发命令测试：`approve`+`continue`、`respond`+`cancel`、两个 `apply`。非法竞争须 `STATE_VERSION_CONFLICT`，禁止先产生副作用再报错。两个 `apply` 同改用户 repo 为重点
+- [ ] journal / 数据 retention
+- [ ] 安装、MCP 注册引导、Skill 安装、凭证引导、doctor 补全、卸载说明
+- [ ] 干净 Windows / 陌生用户：从安装说明开始，不改 Bridge 源码，完成一次 Claude `run → permission → verify → approve → apply`
+
+同进程多 `tools/call` 重叠（`rl.on("line", async ...)` 无队列）**不**升为 ADR 阻塞。不同 Task 允许并行；同 Task 靠 `stateVersion`。尚无实际 race 失败证据。P1 并发测试覆盖即可。
+
+### 明确推迟（需新证据才开 ADR-002）
+
+不是取消：HTTP daemon、SQLite、GUI、single-file EXE。
+
+可触发 ADR-002 的例：多个 Codex 窗口必须共享同一个 live Worker Core；跨 Codex 会话必须保持 Agent 实时运行；JSON 单写者出现实测性能/可靠性瓶颈；必须有独立桌面端管理大量并发任务。
+
+---
+
+## Stall / TTL（已定，不再讨论）
+
+现机制只有 `timeoutMs` → `TASK_TIMED_OUT` → 停 Worker、保留 worktree、可 continue/reject。安静 ≠ turn 结束。
+
+未来 stall：无事件 → `health = suspected_stall`。禁止无事件 → 自动完成。禁止默认自动 cancel。
+
+---
+
+## 1. 产品不变约束
 
 这些是已冻结、且已被实现与实测咬住的硬约束：
 
@@ -192,46 +231,33 @@ OpenCode 仍可后做。
 
 ---
 
-## 6. 请裁决
+## 6. 裁决记录（历史）
 
-请只选一个，并写理由（3–8 条，引用本文证据或指出本文缺证）：
-
-- **采纳路线 B**（MCP 产品线；HTTP/SQLite/GUI/EXE 等证据再开）  
-- **采纳路线 A**（按 V0.4 全套做完，OpenCode 除外）  
-- **第三条**：写清范围、顺序、以及它如何处理 MCP 已存在这一事实  
-
-无论选哪条，保持第 1 节硬约束。不要建议 Bridge 调用 LLM，不要建议 merge 代替 cherry-pick，不要建议信任 Worker 自称测过。
+2026-08-19 正式采纳路线 B。原「请审核者三选一」已关闭。证据见附录。不在此重开 A/B。
 
 ---
 
 ## Alternatives Considered
 
+### 路线 A — 完成 V0.4 HTTP/SQLite/GUI/EXE 全套
+
+Rejected。附录表明缺口是文件协议与 `FINALIZING` 恢复，不是缺第二套传输或数据库引擎。
+
 ### 停在当前仓库，不写安装器
 
-- 优点：零额外工作  
-- 缺点：只有作者机器能用，不能称为产品  
-- 不作为本 ADR 的「完善产品」选项  
+Rejected as 可分发 V1。作者机闭环 ≠ 产品。安装与 P0 文件协议仍要做。
 
 ### 先做 HTTP+SQLite，安装器后做
 
-- 优点：接近 V0.4 D6  
-- 缺点：用户仍然装不上；且与 MCP 单例双重 Core  
-- 拒绝作为默认顺序  
+Rejected as 默认顺序。与 MCP 入口叠 Core；用户仍装不上。
 
 ### 现在就接 OpenCode
 
-- 用户已指示后续慢慢接入  
-- 与本路线选择正交，不阻塞 A/B  
+Deferred。后接 Profile。与本路线正交。
 
-## Consequences（若采纳 B）
+## Consequences
 
-- V0.5「仍不做 HTTP/SQLite/GUI」从暂缓变为**产品方向**，直到出现新证据  
-- 下一阶段 KPI 是：陌生人按文档能注册 MCP 并跑通一次 approve/apply，而不是 daemon 监听 127.0.0.1  
-- V0.4 仍保留为架构思想来源，不再当 sprint backlog  
-- 若日后 MCP 进程模型破产，再写 ADR-002 启用 HTTP Core，并标明本 ADR 被 supersede  
-
-## Consequences（若采纳 A）
-
-- 需要重新打开 V0.5 第 5 节「明确仍不做」  
-- 工期与范围按「第二个产品表面」估计，而不是「扫尾 Phase 2」  
-- MCP stdio 仍应保留（V0.5：CLI 永久保留；MCP 已是 Codex 入口），HTTP 只能是附加，不能拆掉已验证入口  
+- 下一阶段实现顺序：P0 三门（锁、原子 JSON、FINALIZING 恢复）→ P1 可靠性与安装验收。不实现 HTTP/SQLite/GUI/EXE，除非 ADR-002
+- V0.4 保留为架构思想，不再当 sprint backlog
+- KPI：干净机器上 Claude `run→permission→verify→approve→apply`，而不是 daemon 监听 127.0.0.1
+- 本 ADR 仅被 ADR-002 在新证据下 supersede
