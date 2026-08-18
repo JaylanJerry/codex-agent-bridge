@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkerProfile } from "../runtime/contract.ts";
+import { loadDeepseekApiKey } from "./credentials.ts";
 
 export const replayProfile: WorkerProfile = {
   id: "replay",
@@ -48,5 +49,9 @@ export function resolveDeepSeekLaunch(repoRoot: string): WorkerProfile["launch"]
     command: process.execPath,
     args: ["--import", "tsx", bin, "--config", config],
     cwd: harness,
+    env: {
+      DEEPSEEK_API_KEY: loadDeepseekApiKey(),
+      NODE_PATH: join(repoRoot, "node_modules"),
+    },
   };
 }

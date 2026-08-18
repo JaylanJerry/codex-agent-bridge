@@ -8,7 +8,8 @@
     "cli": "tsx src/cli.ts",
     "mcp": "tsx src/mcp/server.ts",
     "mcp:smoke": "tsx scripts/replay-mcp-smoke.ts",
-    "mcp:claude-smoke": "tsx scripts/live-claude-mcp-smoke.ts"
+    "mcp:claude-smoke": "tsx scripts/live-claude-mcp-smoke.ts",
+    "mcp:deepseek-smoke": "tsx scripts/live-deepseek-mcp-smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.25.1",
