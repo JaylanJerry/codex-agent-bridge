@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { canonicalFsPath, gitSpawnEnv, isHomeTaskWorktreePath } from "../canonical-path.ts";
 import { BridgeError, ErrorCodes } from "../core/errors.ts";
 import { repoDataDir, taskWorktreePath } from "../persistence/layout.ts";
 
@@ -9,6 +10,7 @@ function git(cwd: string, args: string[]): string {
     cwd,
     encoding: "utf8",
     windowsHide: true,
+    env: gitSpawnEnv(),
   });
   if (proc.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${proc.stderr || proc.stdout}`);
@@ -250,23 +252,7 @@ export function abortCherryPick(repoPath: string): void {
 }
 
 export function canonicalWorktreePath(path: string): string {
-  let s = path.trim().replace(/^"(.*)"$/, "$1");
-  if (s.startsWith("\\\\?\\")) s = s.slice(4);
-  else if (s.startsWith("//?/")) s = s.slice(4);
-  if (process.platform === "win32") {
-    const cyg = /^\/cygdrive\/([a-zA-Z])(?:\/(.*))?$/.exec(s);
-    if (cyg) s = `${cyg[1]}:${cyg[2] ? `/${cyg[2]}` : "/"}`;
-    else {
-      const msys = /^\/([a-zA-Z])(?:\/(.*))?$/.exec(s);
-      if (msys) s = `${msys[1]}:${msys[2] ? `/${msys[2]}` : "/"}`;
-    }
-  }
-  const abs = resolve(s);
-  try {
-    return existsSync(abs) ? realpathSync(abs) : abs;
-  } catch {
-    return abs;
-  }
+  return canonicalFsPath(path);
 }
 
 export function worktreeKey(path: string): string {
@@ -297,6 +283,7 @@ export function listAgentBridgeWorktrees(repoPath: string): string[] {
     cwd: resolve(repoPath),
     encoding: "utf8",
     windowsHide: true,
+    env: gitSpawnEnv(),
   });
   if (proc.status !== 0) return [];
   const homeWorktrees = worktreeKey(join(repoDataDir(repoPath), "worktrees"));
@@ -306,7 +293,12 @@ export function listAgentBridgeWorktrees(repoPath: string): string[] {
     const path = line.slice("worktree ".length);
     const key = worktreeKey(path);
     const leftover = /[\\/]agent-bridge[\\/]/i.test(path);
-    if (leftover || key === homeWorktrees || key.startsWith(`${homeWorktrees}/`)) {
+    if (
+      leftover ||
+      isHomeTaskWorktreePath(path) ||
+      key === homeWorktrees ||
+      key.startsWith(`${homeWorktrees}/`)
+    ) {
       paths.push(canonicalWorktreePath(path));
     }
   }

@@ -2,16 +2,19 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { canonicalFsPath, gitSpawnEnv } from "../canonical-path.ts";
 import { bridgeHome } from "../paths.ts";
 
 export const STORE_VERSION = 2;
 
 function gitCommonDir(repoPath: string): string {
   const abs = resolve(repoPath);
+  const env = gitSpawnEnv();
   const proc = spawnSync("git", ["-c", "core.longpaths=true", "rev-parse", "--path-format=absolute", "--git-common-dir"], {
     cwd: abs,
     encoding: "utf8",
     windowsHide: true,
+    env,
   });
   let dir = (proc.stdout ?? "").trim();
   if (proc.status !== 0 || !dir) {
@@ -19,14 +22,15 @@ function gitCommonDir(repoPath: string): string {
       cwd: abs,
       encoding: "utf8",
       windowsHide: true,
+      env,
     });
     dir = (fallback.stdout ?? "").trim() || join(abs, ".git");
   }
-  if (!isAbsolute(dir)) dir = resolve(abs, dir);
+  dir = canonicalFsPath(isAbsolute(dir) || /^[a-zA-Z]:[\\/]/.test(dir) ? dir : resolve(abs, dir));
   try {
     return realpathSync(dir);
   } catch {
-    return resolve(dir);
+    return dir;
   }
 }
 

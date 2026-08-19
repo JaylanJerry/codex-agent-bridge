@@ -4,11 +4,13 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { isHomeTaskWorktreePath } from "../src/canonical-path.ts";
 import {
   agentBridgeWorktreeId,
   checkpointCommit,
   createTaskWorktree,
   isProtectedAgentBridgeWorktree,
+  listAgentBridgeWorktrees,
   removeTaskWorktree,
   worktreeKey,
 } from "../src/workspace/worktree.ts";
@@ -34,12 +36,22 @@ test("creates isolated worktree and checkpoint commit", () => {
   const handle = createTaskWorktree(root, "task-1");
   assert.match(handle.worktreePath.replaceAll("\\", "/"), /\/worktrees\/task-1$/);
   assert.equal(existsSync(join(root, "agent-bridge")), false);
+  const listed = listAgentBridgeWorktrees(root);
+  assert.equal(listed.some((path) => worktreeKey(path) === worktreeKey(handle.worktreePath)), true);
   writeFileSync(join(handle.worktreePath, "wip.ts"), "export const n = 1;\n");
   const commit = checkpointCommit(handle.worktreePath, "checkpoint: task-1");
   assert.notEqual(commit, handle.baseCommit);
   assert.equal(git(root, ["rev-parse", "HEAD"]), handle.baseCommit);
   removeTaskWorktree(handle);
   rmSync(root, { recursive: true, force: true });
+});
+
+test("isHomeTaskWorktreePath recognizes home layout paths", () => {
+  assert.equal(
+    isHomeTaskWorktreePath("/tmp/agent-bridge-tests/repos/abcdabcdabcdabcd/worktrees/old-completed"),
+    true,
+  );
+  assert.equal(isHomeTaskWorktreePath("/tmp/repo/agent-bridge/old-completed"), false);
 });
 
 test("agentBridgeWorktreeId reads the task folder name", () => {
@@ -64,4 +76,9 @@ test("worktreeKey treats Git Bash and Windows paths as the same location", { ski
   assert.equal(isProtectedAgentBridgeWorktree(msys, new Set(), protectedIds), true);
   assert.equal(isProtectedAgentBridgeWorktree(mixed, protectedKeys, new Set()), true);
   assert.equal(isProtectedAgentBridgeWorktree("/d/a/_temp/ab-prune-xyz/agent-bridge/other", protectedKeys, protectedIds), false);
+  const rest = "agent-bridge-tests/repos/abcdabcdabcdabcd/worktrees/old-completed";
+  assert.equal(worktreeKey(`/tmp/${rest}`), worktreeKey(join(tmpdir(), rest)));
+  assert.equal(isHomeTaskWorktreePath(`/tmp/${rest}`), true);
+  assert.equal(isHomeTaskWorktreePath(`D:/a/_temp/${rest}`), true);
+  assert.equal(isHomeTaskWorktreePath("D:/a/_temp/ab-prune-xyz/agent-bridge/task-id"), false);
 });
