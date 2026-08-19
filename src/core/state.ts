@@ -1,3 +1,5 @@
+import type { PermissionMode } from "../runtime/contract.ts";
+
 export type TaskState =
   | "QUEUED"
   | "STARTING"
@@ -24,6 +26,17 @@ export type BridgeTaskInput = {
   constraints?: string[];
   acceptanceCriteria?: { id: string; text: string }[];
   verification?: { enabled: boolean; verifyIds: string[] };
+  permissionMode?: PermissionMode;
+};
+
+export type ApplicationRecord = {
+  operationId: string;
+  taskId: string;
+  approvedCommit: string;
+  targetBranch: string;
+  preApplyHead: string;
+  landedHead?: string;
+  state: "CLAIMED" | "APPLIED";
 };
 
 export type TaskRecord = {
@@ -63,6 +76,8 @@ export type TaskRecord = {
     title?: string;
     options: { optionId: string; kind: string; name: string }[];
   };
+  permissionMode?: PermissionMode;
+  application?: ApplicationRecord;
 };
 
 const allowed: Record<TaskState, TaskState[]> = {

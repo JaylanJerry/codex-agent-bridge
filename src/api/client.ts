@@ -223,7 +223,6 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
     const extraWorkers = request.worker ? [request.worker] : [];
     const timeoutMs = request.timeoutMs ?? 900_000;
     const { manager, store } = getCore(projectPath, replayTurn, extraWorkers);
-    manager.setPermissionMode(request.permissionMode ?? "auto");
     const persist = () => store.save(manager.snapshot());
 
     const finish = async (taskId: string) => {
@@ -246,6 +245,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
         projectPath,
         workerId: assertCallableWorker(request.worker, request.files),
         isolation: { mode: request.inPlace ? "in-place" : "worktree" },
+        permissionMode: request.permissionMode ?? "auto",
         verification:
           (request.verifyIds ?? []).length > 0
             ? { enabled: true, verifyIds: request.verifyIds ?? [] }

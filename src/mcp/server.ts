@@ -64,7 +64,8 @@ function toRequest(name: string, args: Record<string, unknown> = {}): BridgeRequ
         : undefined,
     timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
     needsAttention: args.needsAttention === true,
-    permissionMode: args.permissionMode === "auto" ? "auto" : "gate",
+    permissionMode:
+      command === "run" ? (args.permissionMode === "auto" ? "auto" : "gate") : undefined,
     optionId: typeof args.optionId === "string" ? args.optionId : undefined,
   };
 }

@@ -234,6 +234,8 @@ test("production MCP schema hides debug worker, files, and inPlace", () => {
   const cont = prod.find((tool) => tool.name === "bridge_continue");
   assert.equal(cont?.inputSchema.properties.worker, undefined);
   assert.equal(cont?.inputSchema.properties.files, undefined);
+  assert.equal(cont?.inputSchema.properties.permissionMode, undefined);
+  assert.ok(run?.inputSchema.properties.permissionMode);
   const dev = buildMcpTools(true);
   const devRun = dev.find((tool) => tool.name === "bridge_run");
   assert.ok(devRun?.inputSchema.properties.files);

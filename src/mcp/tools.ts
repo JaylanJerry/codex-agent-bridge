@@ -62,7 +62,6 @@ export function buildMcpTools(debug = debugWorkersAllowed()): McpTool[] {
     notes: { type: "string" },
     stateVersion: { type: "number" },
     timeoutMs: { type: "number" },
-    permissionMode: { type: "string", enum: ["auto", "gate"] },
   };
   if (debug) {
     continueProperties.files = {
