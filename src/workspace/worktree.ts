@@ -22,16 +22,16 @@ export type WorktreeHandle = {
   baseCommit: string;
 };
 
-export function createTaskWorktree(repoPath: string, taskId: string): WorktreeHandle {
+export function createTaskWorktree(repoPath: string, taskId: string, startPoint?: string): WorktreeHandle {
   const abs = resolve(repoPath);
-  const baseCommit = git(abs, ["rev-parse", "HEAD"]);
+  const baseCommit = startPoint ? git(abs, ["rev-parse", startPoint]) : git(abs, ["rev-parse", "HEAD"]);
   const taskBranch = `agent-bridge/${taskId}`;
   const worktreePath = join(abs, "agent-bridge", taskId);
   mkdirSync(join(abs, "agent-bridge"), { recursive: true });
   if (existsSync(worktreePath)) {
     throw new Error(`worktree already exists: ${worktreePath}`);
   }
-  git(abs, ["worktree", "add", worktreePath, "-b", taskBranch]);
+  git(abs, ["worktree", "add", worktreePath, "-b", taskBranch, baseCommit]);
   return { repoPath: abs, worktreePath, taskBranch, baseCommit };
 }
 
@@ -56,11 +56,16 @@ export function checkpointCommit(worktreePath: string, message: string): string 
   return git(worktreePath, ["rev-parse", "HEAD"]);
 }
 
-export function checkpointFromTree(worktreePath: string, treeOid: string, message: string): string {
+export function checkpointFromTree(
+  worktreePath: string,
+  treeOid: string,
+  baseCommit: string,
+  taskBranch: string,
+  message: string,
+): string {
   const abs = resolve(worktreePath);
-  const head = git(abs, ["rev-parse", "HEAD"]);
-  const headTree = git(abs, ["rev-parse", "HEAD^{tree}"]);
-  if (headTree === treeOid) return head;
+  const baseTree = git(abs, ["rev-parse", `${baseCommit}^{tree}`]);
+  if (baseTree === treeOid) return baseCommit;
   const commit = git(abs, [
     "-c",
     "user.name=agent-bridge",
@@ -69,11 +74,22 @@ export function checkpointFromTree(worktreePath: string, treeOid: string, messag
     "commit-tree",
     treeOid,
     "-p",
-    "HEAD",
+    baseCommit,
     "-m",
     message,
   ]);
-  git(abs, ["update-ref", "HEAD", commit]);
+  const ref = taskBranch ? `refs/heads/${taskBranch}` : "HEAD";
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "update-ref", ref, commit, baseCommit], {
+    cwd: abs,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) {
+    throw new BridgeError(
+      ErrorCodes.WORKER_COMMITTED,
+      `task branch moved; expected ${baseCommit}: ${proc.stderr || proc.stdout}`,
+    );
+  }
   return commit;
 }
 

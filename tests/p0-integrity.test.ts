@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, chmodSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, chmodSync, unlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -17,6 +17,7 @@ import {
 } from "../src/workers/debug.ts";
 import { parseDiffRawZ, writeWorktreeResultTree } from "../src/review/snapshot.ts";
 import { checkpointFromTree } from "../src/workspace/worktree.ts";
+import { buildMcpTools } from "../src/mcp/tools.ts";
 
 function git(cwd: string, args: string[]) {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
@@ -185,6 +186,7 @@ test("run fails closed when verification is required but baseCommit has no plan"
       return true;
     },
   );
+  assert.equal(existsSync(join(root, "agent-bridge")), false);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -222,6 +224,22 @@ test("production API requires an explicit real worker", () => {
   });
 });
 
+test("production MCP schema hides debug worker, files, and inPlace", () => {
+  const prod = buildMcpTools(false);
+  const run = prod.find((tool) => tool.name === "bridge_run");
+  const worker = run?.inputSchema.properties.worker as { enum?: string[] };
+  assert.deepEqual(worker.enum, ["claude", "deepseek"]);
+  assert.equal(run?.inputSchema.properties.files, undefined);
+  assert.equal(run?.inputSchema.properties.inPlace, undefined);
+  const cont = prod.find((tool) => tool.name === "bridge_continue");
+  assert.equal(cont?.inputSchema.properties.worker, undefined);
+  assert.equal(cont?.inputSchema.properties.files, undefined);
+  const dev = buildMcpTools(true);
+  const devRun = dev.find((tool) => tool.name === "bridge_run");
+  assert.ok(devRun?.inputSchema.properties.files);
+  assert.ok(devRun?.inputSchema.properties.inPlace);
+});
+
 test("untracked filename with arrow is reviewed, not parsed as rename", async () => {
   const parsed = parseDiffRawZ(":000000 100644 0000000 abcdef0 A\0a -> b\0");
   assert.equal(parsed.length, 1);
@@ -240,11 +258,44 @@ test("untracked filename with arrow is reviewed, not parsed as rename", async ()
 test("checkpoint commits the reviewed tree, not later worktree writes", async () => {
   const root = initRepo();
   const { first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
-  const tree = writeWorktreeResultTree(first.worktreePath!);
+  const tree = writeWorktreeResultTree(first.worktreePath!, first.baseCommit!);
   writeFileSync(join(first.worktreePath!, "src.ts"), "export const v = 99;\n");
-  const commit = checkpointFromTree(first.worktreePath!, tree, "checkpoint: frozen");
+  const commit = checkpointFromTree(
+    first.worktreePath!,
+    tree,
+    first.baseCommit!,
+    first.taskBranch!,
+    "checkpoint: frozen",
+  );
   assert.match(git(first.worktreePath!, ["show", `${commit}:src.ts`]), /export const v = 2/);
   assert.equal(git(first.worktreePath!, ["show", `${commit}:src.ts`]).includes("99"), false);
+  assert.equal(git(first.worktreePath!, ["rev-parse", `${commit}~1`]), first.baseCommit);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("checkpoint fails closed if HEAD moves after the reviewed tree is frozen", async () => {
+  const root = initRepo();
+  const { first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
+  const tree = writeWorktreeResultTree(first.worktreePath!, first.baseCommit!);
+  git(first.worktreePath!, ["config", "user.name", "t"]);
+  git(first.worktreePath!, ["config", "user.email", "t@t"]);
+  git(first.worktreePath!, ["add", "-A"]);
+  git(first.worktreePath!, ["commit", "-m", "worker sneak"]);
+  assert.throws(
+    () =>
+      checkpointFromTree(
+        first.worktreePath!,
+        tree,
+        first.baseCommit!,
+        first.taskBranch!,
+        "checkpoint: frozen",
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof BridgeError);
+      assert.equal(error.code, "WORKER_COMMITTED");
+      return true;
+    },
+  );
   rmSync(root, { recursive: true, force: true });
 });
 

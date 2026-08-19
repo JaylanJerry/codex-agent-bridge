@@ -72,16 +72,33 @@ export function reviewDigest(snapshot: ReviewSnapshot): string {
   return sha256(JSON.stringify(canonicalize(payload)));
 }
 
-export function writeWorktreeResultTree(cwd: string): string {
+export function writeWorktreeResultTree(cwd: string, baseCommit: string): string {
+  const headBefore = git(cwd, ["rev-parse", "HEAD"]);
+  if (headBefore.status !== 0) throw new Error(headBefore.stderr || "rev-parse HEAD failed");
+  const head = headBefore.stdout.trim();
+  if (head !== baseCommit) {
+    throw new BridgeError(
+      ErrorCodes.WORKER_COMMITTED,
+      "Worker committed in the worktree; V1 does not support Worker commits",
+    );
+  }
   const indexPath = join(tmpdir(), `ab-review-${randomUUID()}.index`);
   const env = { GIT_INDEX_FILE: indexPath };
   try {
-    const read = git(cwd, ["read-tree", "HEAD"], env);
-    if (read.status !== 0) throw new Error(read.stderr || "git read-tree HEAD failed");
+    const read = git(cwd, ["read-tree", baseCommit], env);
+    if (read.status !== 0) throw new Error(read.stderr || "git read-tree baseCommit failed");
     const add = git(cwd, ["add", "-A"], env);
     if (add.status !== 0) throw new Error(add.stderr || "git add -A failed");
     const written = git(cwd, ["write-tree"], env);
     if (written.status !== 0) throw new Error(written.stderr || "git write-tree failed");
+    const headAfter = git(cwd, ["rev-parse", "HEAD"]);
+    if (headAfter.status !== 0) throw new Error(headAfter.stderr || "rev-parse HEAD failed");
+    if (headAfter.stdout.trim() !== baseCommit) {
+      throw new BridgeError(
+        ErrorCodes.WORKER_COMMITTED,
+        "Worker committed in the worktree; V1 does not support Worker commits",
+      );
+    }
     return written.stdout.trim();
   } finally {
     rmSync(indexPath, { force: true });
@@ -162,7 +179,20 @@ export function buildReviewSnapshot(opts: {
   const headProc = git(opts.cwd, ["rev-parse", "HEAD"]);
   if (headProc.status !== 0) throw new Error(headProc.stderr || "rev-parse HEAD failed");
   const head = headProc.stdout.trim();
-  const resultTreeOid = writeWorktreeResultTree(opts.cwd);
+  if (head !== opts.baseCommit) {
+    throw new BridgeError(
+      ErrorCodes.WORKER_COMMITTED,
+      "Worker committed in the worktree; V1 does not support Worker commits",
+    );
+  }
+  const resultTreeOid = writeWorktreeResultTree(opts.cwd, opts.baseCommit);
+  const headAfter = git(opts.cwd, ["rev-parse", "HEAD"]);
+  if (headAfter.status !== 0 || headAfter.stdout.trim() !== opts.baseCommit) {
+    throw new BridgeError(
+      ErrorCodes.WORKER_COMMITTED,
+      "Worker committed in the worktree; V1 does not support Worker commits",
+    );
+  }
 
   const raw = git(opts.cwd, ["diff-tree", "-r", "--raw", "-z", "--no-commit-id", opts.baseCommit, resultTreeOid]);
   if (raw.status !== 0) throw new Error(raw.stderr || "git diff-tree --raw failed");

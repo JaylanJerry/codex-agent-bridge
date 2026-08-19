@@ -106,7 +106,13 @@ export class TaskManager {
     let commit = task.approvedCommit;
     if (!commit && task.reviewTreeOid && checkpointCwd) {
       try {
-        commit = checkpointFromTree(checkpointCwd, task.reviewTreeOid, `checkpoint: ${task.taskId}`);
+        commit = checkpointFromTree(
+          checkpointCwd,
+          task.reviewTreeOid,
+          task.baseCommit ?? "",
+          task.taskBranch ?? "",
+          `checkpoint: ${task.taskId}`,
+        );
       } catch (error) {
         this.journal.append("finalizing-recovery-failed", { error: String(error) }, task.taskId);
         this.persist();
@@ -150,13 +156,16 @@ export class TaskManager {
     const driver = this.drivers.get(profile.preferredRuntime);
     if (!driver) throw new Error(`no driver for ${profile.preferredRuntime}`);
 
+    const baseCommit = repoHead(input.projectPath);
+    const targetBranch = currentBranch(input.projectPath);
+    const expectedTargetHead = baseCommit;
+    const verification = resolveVerification(input, input.projectPath, baseCommit);
+
     const taskId = randomUUID();
     const worktree =
-      isolation === "worktree" ? createTaskWorktree(input.projectPath, taskId) : undefined;
+      isolation === "worktree" ? createTaskWorktree(input.projectPath, taskId, baseCommit) : undefined;
     const worktreePath = worktree?.worktreePath ?? input.projectPath;
     if (worktree) this.worktrees.set(taskId, worktree);
-    const baseCommit = worktree?.baseCommit ?? repoHead(input.projectPath);
-    const verification = resolveVerification(input, input.projectPath, baseCommit);
 
     const task: TaskRecord = {
       taskId,
@@ -168,8 +177,8 @@ export class TaskManager {
       worktreePath,
       taskBranch: worktree?.taskBranch,
       baseCommit,
-      targetBranch: currentBranch(input.projectPath),
-      expectedTargetHead: repoHead(input.projectPath),
+      targetBranch,
+      expectedTargetHead,
       objective: input.objective,
       projectPath: input.projectPath,
       workerId: input.workerId,
@@ -469,6 +478,8 @@ export class TaskManager {
         task.approvedCommit = checkpointFromTree(
           task.worktreePath,
           snapshot.resultTreeOid,
+          task.baseCommit ?? snapshot.baseCommit,
+          task.taskBranch ?? "",
           `checkpoint: ${task.taskId}`,
         );
       }
