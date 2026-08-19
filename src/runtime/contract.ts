@@ -66,6 +66,12 @@ export type RuntimeSession = {
   resumed?: boolean;
 };
 
+export type StartOptions = {
+  resumeSessionId?: string;
+  signal?: AbortSignal;
+  startupTimeoutMs?: number;
+};
+
 export interface RuntimeDriver {
   readonly kind: RuntimeKind;
   start(profile: WorkerProfile, worktreePath: string, options?: StartOptions): Promise<RuntimeSession>;
