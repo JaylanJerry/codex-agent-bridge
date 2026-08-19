@@ -25,7 +25,7 @@ const tools = [
       properties: {
         project: { type: "string", description: "Git repo path" },
         objective: { type: "string" },
-        worker: { type: "string", description: "replay | claude | deepseek | fake" },
+        worker: { type: "string", description: "claude | deepseek. replay/fake only in test/dev." },
         clientRequestId: { type: "string" },
         inPlace: { type: "boolean" },
         verifyIds: { type: "array", items: { type: "string" } },
@@ -41,7 +41,7 @@ const tools = [
           description: "auto selects allow_once. gate pauses at WAITING_FOR_INPUT for bridge_respond. MCP default is gate.",
         },
       },
-      required: ["project", "objective"],
+      required: ["project", "objective", "worker"],
       additionalProperties: false,
     },
   },

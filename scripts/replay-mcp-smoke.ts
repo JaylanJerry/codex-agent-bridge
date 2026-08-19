@@ -15,6 +15,8 @@ function git(cwd: string, args: string[]) {
   return proc.stdout.trim();
 }
 
+process.env.AGENT_BRIDGE_DEV = "1";
+
 const root = mkdtempSync(join(tmpdir(), "ab-mcp-smoke-"));
 git(root, ["init"]);
 git(root, ["config", "user.name", "t"]);

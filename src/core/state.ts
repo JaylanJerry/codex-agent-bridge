@@ -41,6 +41,13 @@ export type TaskRecord = {
   appliedHead?: string;
   lastStopReason?: string;
   lastVerification?: { passed: boolean; output: string; skipped: boolean };
+  reviewDigest?: string;
+  targetBranch?: string;
+  expectedTargetHead?: string;
+  verificationPlan?: {
+    schemaVersion?: string;
+    commands: Record<string, { exe: string; args: string[]; timeoutMs?: number }>;
+  };
   sessionId?: string;
   sessionResumed?: boolean;
   objective: string;

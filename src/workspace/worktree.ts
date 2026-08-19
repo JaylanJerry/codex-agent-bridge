@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { BridgeError, ErrorCodes } from "../core/errors.ts";
 
 function git(cwd: string, args: string[]): string {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
@@ -110,9 +111,78 @@ export function gitDir(repoPath: string): string {
   return (proc.stdout ?? "").trim();
 }
 
-export function cherryPickInProgress(repoPath: string): boolean {
+export function currentBranch(repoPath: string): string {
+  return git(resolve(repoPath), ["rev-parse", "--abbrev-ref", "HEAD"]);
+}
+
+export function workingTreeDirty(repoPath: string): boolean {
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "status", "--porcelain=v1", "-uall"], {
+    cwd: resolve(repoPath),
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) {
+    throw new Error(`git status failed: ${proc.stderr || proc.stdout}`);
+  }
+  const lines = (proc.stdout ?? "").split(/\r?\n/).filter(Boolean);
+  return lines.some((line) => {
+    const parsed = parseStatusPath(line);
+    return parsed && !isBridgeOwnedPath(parsed);
+  });
+}
+
+function parseStatusPath(line: string): string | undefined {
+  if (line.length < 4) return undefined;
+  let rest = line.slice(3);
+  if (rest.includes(" -> ")) rest = rest.split(" -> ").pop() ?? rest;
+  const trimmed = rest.trim().replace(/^"|"$/g, "");
+  return trimmed.replaceAll("\\", "/");
+}
+
+function isBridgeOwnedPath(path: string): boolean {
+  const normalized = path.replace(/^\.\//, "").replace(/\/$/, "");
+  return (
+    normalized === ".agent-bridge-data" ||
+    normalized.startsWith(".agent-bridge-data/") ||
+    normalized === "agent-bridge" ||
+    normalized.startsWith("agent-bridge/") ||
+    // Tests write journals at repo root; production journals live under .agent-bridge-data.
+    normalized === "journal.ndjson"
+  );
+}
+
+export type GitOperation =
+  | "none"
+  | "cherry-pick"
+  | "merge"
+  | "rebase"
+  | "revert"
+  | "bisect"
+  | "sequencer";
+
+export function inspectGitOperation(repoPath: string): GitOperation {
   const dir = gitDir(repoPath);
-  return existsSync(join(dir, "CHERRY_PICK_HEAD")) || existsSync(join(dir, "sequencer"));
+  if (existsSync(join(dir, "CHERRY_PICK_HEAD"))) return "cherry-pick";
+  if (existsSync(join(dir, "MERGE_HEAD"))) return "merge";
+  if (existsSync(join(dir, "REBASE_HEAD"))) return "rebase";
+  if (existsSync(join(dir, "rebase-merge"))) return "rebase";
+  if (existsSync(join(dir, "rebase-apply"))) return "rebase";
+  if (existsSync(join(dir, "REVERT_HEAD"))) return "revert";
+  if (existsSync(join(dir, "BISECT_LOG"))) return "bisect";
+  if (existsSync(join(dir, "sequencer"))) return "sequencer";
+  return "none";
+}
+
+export function assertTargetIdle(repoPath: string): void {
+  const op = inspectGitOperation(repoPath);
+  if (op !== "none") {
+    throw new BridgeError(ErrorCodes.TARGET_REPO_BUSY, `git operation in progress: ${op}`);
+  }
+}
+
+export function cherryPickInProgress(repoPath: string): boolean {
+  const op = inspectGitOperation(repoPath);
+  return op === "cherry-pick" || op === "sequencer";
 }
 
 export function abortCherryPick(repoPath: string): void {

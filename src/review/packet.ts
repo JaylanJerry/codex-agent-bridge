@@ -1,4 +1,5 @@
 import type { ChangeSet } from "../workspace/changes.ts";
+import type { ReviewSnapshot } from "./snapshot.ts";
 
 export type ReviewPacket = {
   objective: string;
@@ -8,6 +9,8 @@ export type ReviewPacket = {
   diffstat: { files: number; added: number; deleted: number; renamed: number };
   changedFiles: { path: string; change: string }[];
   warnings: string[];
+  digest: string;
+  diff: string;
 };
 
 export function buildReviewPacket(input: {
@@ -16,14 +19,19 @@ export function buildReviewPacket(input: {
   workerStopReason?: string;
   verification?: { passed: boolean; output?: string };
   changeSet: ChangeSet;
+  snapshot: ReviewSnapshot;
+  digest: string;
 }): ReviewPacket {
-  const files = input.changeSet.files;
+  const files = input.snapshot.files;
   const warnings: string[] = [];
-  if (!input.changeSet.headEqualsBase && !input.changeSet.rangedDiffEmpty) {
-    warnings.push("HEAD moved; Worker may have committed");
+  if (input.snapshot.head !== input.snapshot.baseCommit) {
+    warnings.push("WORKER_COMMITTED: HEAD moved; Worker must not commit");
   }
   if (input.verification && !input.verification.passed) {
     warnings.push("verification failed");
+  }
+  if (input.snapshot.verifyConfigDrift) {
+    warnings.push("Worker modified verification config; Bridge will not use the worktree copy");
   }
   return {
     objective: input.objective,
@@ -38,5 +46,7 @@ export function buildReviewPacket(input: {
     },
     changedFiles: files.map((file) => ({ path: file.path, change: file.change })),
     warnings,
+    digest: input.digest,
+    diff: input.snapshot.diff,
   };
 }

@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { RuntimeDriver, RuntimeSession, StartOptions, TurnInput, WorkerProfile } from "../contract.ts";
+import { safeJoinWorktree } from "../../workspace/safe-path.ts";
 
 export type ReplayTurn = {
   stopReason: "end_turn" | "cancelled";
@@ -34,7 +35,7 @@ export class ReplayRuntimeDriver implements RuntimeDriver {
     this.queues.set(session.id, queue);
     if (!turn) throw new Error("replay script exhausted");
     for (const [relative, contents] of Object.entries(turn.files ?? {})) {
-      const target = join(session.worktreePath, relative);
+      const target = safeJoinWorktree(session.worktreePath, relative);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, contents);
     }

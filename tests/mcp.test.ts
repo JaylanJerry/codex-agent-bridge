@@ -243,9 +243,9 @@ test("MCP required args: missing project/task is explicit; taskId alias works", 
   const client = new McpStdioClient();
   try {
     await client.initialize();
-    const noProject = await client.callTool("bridge_status", {});
-    assert.equal(noProject.isError, true);
-    assert.match(String((noProject.structuredContent as BridgeResult).error), /missing project/);
+    const noWorker = await client.callTool("bridge_run", { project: root, objective: "x" });
+    assert.equal(noWorker.isError, true);
+    assert.match(String((noWorker.structuredContent as BridgeResult).error), /missing worker/);
 
     const noTask = await client.callTool("bridge_respond", {
       project: root,
