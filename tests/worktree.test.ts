@@ -36,8 +36,12 @@ test("creates isolated worktree and checkpoint commit", () => {
   const handle = createTaskWorktree(root, "task-1");
   assert.match(handle.worktreePath.replaceAll("\\", "/"), /\/worktrees\/task-1$/);
   assert.equal(existsSync(join(root, "agent-bridge")), false);
+  const porcelain = git(root, ["worktree", "list", "--porcelain"]);
   const listed = listAgentBridgeWorktrees(root);
-  assert.equal(listed.some((path) => worktreeKey(path) === worktreeKey(handle.worktreePath)), true);
+  assert.ok(
+    listed.some((path) => agentBridgeWorktreeId(path) === "task-1"),
+    `expected task-1 worktree in ${JSON.stringify(listed)}; handle=${handle.worktreePath}; porcelain=${porcelain}`,
+  );
   writeFileSync(join(handle.worktreePath, "wip.ts"), "export const n = 1;\n");
   const commit = checkpointCommit(handle.worktreePath, "checkpoint: task-1");
   assert.notEqual(commit, handle.baseCommit);
