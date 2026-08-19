@@ -71,7 +71,7 @@ V1 **只选择 Worker**（`claude` / `deepseek` / 调试用 `replay` / `fake`）
 - reasoning effort
 - model routing
 
-Claude Code 与 DeepSeek Harness 由用户按各自原生方式提前配置并完成认证。Bridge 启动 Worker 时继承其**当前持久配置**。
+Claude Code 与 DeepSeek Harness 由用户按各自原生方式提前配置并完成认证。Bridge 启动 Worker 时继承其**当前持久配置**。Claude 通过进程环境（含 `HOME`）读取 `~/.claude/settings.json`。DeepSeek 的 ACP demo 不挂 settings-file 插件，Bridge 只把 `~/.dsh/settings.yaml` 的 `agent-default-model` 覆到一份临时 demo `cordis.yml`；不把 `--model` 放进 argv，也不建立统一模型管理。
 
 Claude 背后走官方 Anthropic、CC Switch 或其他第三方 Provider，一律视为 **Worker 内部实现**。Bridge 不感知、不修改、不得猜测 effective upstream model。
 

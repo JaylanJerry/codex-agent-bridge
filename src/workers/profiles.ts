@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import type { WorkerProfile } from "../runtime/contract.ts";
 import { loadDeepseekApiKey } from "./credentials.ts";
-import { inheritedDeepSeekHome } from "./launch-policy.ts";
+import { inheritedDeepSeekHome, inheritDeepSeekAcpConfig, deepSeekInheritedAcpConfigPath } from "./launch-policy.ts";
 
 export const replayProfile: WorkerProfile = {
   id: "replay",
@@ -108,7 +108,8 @@ export function resolveDeepSeekLaunch(packageRoot: string): WorkerProfile["launc
     );
   }
   const bin = join(harness, "packages/examples/acp-demo/src/bin.ts");
-  const config = join(harness, "examples/acp-agent/cordis.yml");
+  const demoConfig = join(harness, "examples/acp-agent/cordis.yml");
+  const config = inheritDeepSeekAcpConfig(demoConfig, deepSeekInheritedAcpConfigPath());
   return {
     command: process.execPath,
     args: ["--import", "tsx", bin, "--config", config],
