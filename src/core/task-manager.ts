@@ -10,6 +10,7 @@ import {
   cherryPickToRepo,
   createTaskWorktree,
   currentBranch,
+  isProtectedAgentBridgeWorktree,
   listAgentBridgeWorktrees,
   removeEmptyAgentBridgeDir,
   removeTaskWorktree,
@@ -571,11 +572,9 @@ export class TaskManager {
   }
 
   pruneWorktrees(projectPath: string): { removed: string[] } {
-    const protectedKeys = new Set(
-      [...this.tasks.values()]
-        .filter((task) => !isTerminalState(task.state) && task.worktreePath)
-        .map((task) => worktreeKey(task.worktreePath!)),
-    );
+    const live = [...this.tasks.values()].filter((task) => !isTerminalState(task.state) && task.worktreePath);
+    const protectedKeys = new Set(live.map((task) => worktreeKey(task.worktreePath!)));
+    const protectedTaskIds = new Set(live.flatMap((task) => [task.taskId, task.taskId.toLowerCase()]));
     const removed: string[] = [];
     const seen = new Set<string>();
     const candidates = [
@@ -586,7 +585,7 @@ export class TaskManager {
     ];
     for (const path of candidates) {
       const key = worktreeKey(path);
-      if (protectedKeys.has(key) || seen.has(key)) continue;
+      if (isProtectedAgentBridgeWorktree(path, protectedKeys, protectedTaskIds) || seen.has(key)) continue;
       seen.add(key);
       try {
         removeTaskWorktree({ repoPath: projectPath, worktreePath: path });
@@ -597,7 +596,7 @@ export class TaskManager {
     }
     for (const task of this.tasks.values()) {
       if (!task.worktreePath || task.worktreePath === task.projectPath) continue;
-      if (protectedKeys.has(worktreeKey(task.worktreePath))) continue;
+      if (isProtectedAgentBridgeWorktree(task.worktreePath, protectedKeys, protectedTaskIds)) continue;
       task.worktreePath = undefined;
     }
     this.journal.append("prune-worktrees", { removed });
