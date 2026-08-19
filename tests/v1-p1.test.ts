@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,7 @@ function initRepo(): string {
   writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "init"]);
+  mkdirSync(join(root, ".agent-bridge-data"), { recursive: true });
   return root;
 }
 
@@ -39,7 +40,7 @@ async function approvedTask(root: string) {
   const manager = new TaskManager(
     new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } }])]]),
     new Map([["replay", replayProfile]]),
-    new Journal(join(root, "journal.ndjson")),
+    new Journal(join(root, ".agent-bridge-data", "journal.ndjson")),
   );
   const created = manager.run({
     schemaVersion: "1.2",
@@ -54,19 +55,15 @@ async function approvedTask(root: string) {
   return { manager, approved };
 }
 
-test("apply recovers when cherry-pick already landed but appliedHead was not persisted", async () => {
+test("apply does not pretend a foreign cherry-pick is crash recovery", async () => {
   const root = initRepo();
   const { manager, approved } = await approvedTask(root);
-  const landed = cherryPickToRepo(root, approved.approvedCommit!);
-  const before = git(root, ["rev-parse", "HEAD"]);
-  assert.equal(before, landed);
-  const recovered = manager.apply(approved.taskId, approved.stateVersion);
-  assert.equal(recovered.appliedHead, before);
-  assert.equal(git(root, ["rev-parse", "HEAD"]), before);
+  cherryPickToRepo(root, approved.approvedCommit!);
+  assert.throws(() => manager.apply(approved.taskId, approved.stateVersion), /TARGET_HEAD_CHANGED|expected HEAD/);
   rmSync(root, { recursive: true, force: true });
 });
 
-test("apply aborts a leftover cherry-pick then lands the checkpoint", async () => {
+test("apply refuses leftover cherry-pick instead of aborting it", async () => {
   const root = initRepo();
   const { manager, approved } = await approvedTask(root);
   const gitDirProc = spawnSync("git", ["-c", "core.longpaths=true", "rev-parse", "--absolute-git-dir"], {
@@ -76,10 +73,9 @@ test("apply aborts a leftover cherry-pick then lands the checkpoint", async () =
   });
   writeFileSync(join(gitDirProc.stdout.trim(), "CHERRY_PICK_HEAD"), `${approved.approvedCommit}\n`);
   assert.equal(cherryPickInProgress(root), true);
-  const landed = manager.apply(approved.taskId, approved.stateVersion);
-  assert.ok(landed.appliedHead);
-  assert.equal(git(root, ["rev-parse", "HEAD"]), landed.appliedHead);
-  assert.equal(cherryPickInProgress(root), false);
+  assert.throws(() => manager.apply(approved.taskId, approved.stateVersion), /TARGET_REPO_BUSY|git operation in progress/);
+  assert.equal(cherryPickInProgress(root), true);
+  assert.equal(git(root, ["rev-parse", "HEAD"]), approved.expectedTargetHead ?? approved.baseCommit);
   rmSync(root, { recursive: true, force: true });
 });
 

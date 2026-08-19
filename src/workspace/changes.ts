@@ -78,15 +78,3 @@ export function collectChanges(cwd: string, baseCommit: string): ChangeSet {
     files,
   };
 }
-
-export function changeSetHash(changeSet: ChangeSet): string {
-  const payload = changeSet.files
-    .map((file) => `${file.change}:${file.path}:${file.oldPath ?? ""}`)
-    .sort()
-    .join("|");
-  return `${changeSet.baseCommit}:${payload}`;
-}
-
-export function worktreeDiff(cwd: string, baseCommit: string): string {
-  return git(cwd, ["diff", "--no-color", baseCommit]);
-}

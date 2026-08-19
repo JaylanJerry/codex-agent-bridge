@@ -3,25 +3,27 @@ import { randomUUID } from "node:crypto";
 import { isTerminalState, needsAttention, transition, type BridgeTaskInput, type TaskRecord } from "./state.ts";
 import { Journal } from "../persistence/journal.ts";
 import type { TaskSnapshot } from "../persistence/store.ts";
+import { BridgeError, ErrorCodes } from "./errors.ts";
 import {
-  abortCherryPick,
-  checkpointCommit,
-  cherryPickInProgress,
+  assertTargetIdle,
+  checkpointFromTree,
   cherryPickToRepo,
   createTaskWorktree,
+  currentBranch,
   listAgentBridgeWorktrees,
   removeEmptyAgentBridgeDir,
   removeTaskWorktree,
   repoHead,
-  revParseOptional,
+  workingTreeDirty,
   worktreeKey,
   type WorktreeHandle,
 } from "../workspace/worktree.ts";
-import { changeSetHash, collectChanges, worktreeDiff } from "../workspace/changes.ts";
+import { buildReviewSnapshot, reviewDigest, snapshotToChangeSet } from "../review/snapshot.ts";
 import { buildReviewPacket, type ReviewPacket } from "../review/packet.ts";
-import { listVerifyIds, runVerification } from "../verification/runner.ts";
+import { listVerifyIds, loadVerificationPlanFromCommit, runVerification } from "../verification/runner.ts";
 import type { PermissionMode, PermissionOutcome, RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
 import { autoSelectPermission } from "../runtime/contract.ts";
+import { assertExecutableWorker, assertInPlaceAllowed, debugWorkersAllowed } from "../workers/debug.ts";
 
 export class TaskAlreadyExistsError extends Error {
   constructor(public readonly taskId: string) {
@@ -55,6 +57,7 @@ export class TaskManager {
     private readonly drivers: Map<string, RuntimeDriver>,
     private readonly profiles: Map<string, WorkerProfile>,
     private readonly journal: Journal,
+    private readonly debugWorkers: () => boolean = debugWorkersAllowed,
   ) {}
 
   setPersist(hook: () => void): void {
@@ -101,18 +104,20 @@ export class TaskManager {
     const checkpointCwd =
       task.worktreePath && existsSync(task.worktreePath) ? task.worktreePath : undefined;
     let commit = task.approvedCommit;
-    if (!commit && checkpointCwd) {
+    if (!commit && task.reviewTreeOid && checkpointCwd) {
       try {
-        commit = checkpointCommit(checkpointCwd, `checkpoint: ${task.taskId}`);
+        commit = checkpointFromTree(
+          checkpointCwd,
+          task.reviewTreeOid,
+          task.baseCommit ?? "",
+          task.taskBranch ?? "",
+          `checkpoint: ${task.taskId}`,
+        );
       } catch (error) {
         this.journal.append("finalizing-recovery-failed", { error: String(error) }, task.taskId);
         this.persist();
         return;
       }
-    }
-    if (!commit && task.taskBranch) {
-      const branchHead = revParseOptional(task.projectPath, task.taskBranch);
-      if (branchHead && branchHead !== task.baseCommit) commit = branchHead;
     }
     if (!commit) {
       this.journal.append("finalizing-recovery-failed", { reason: "checkpoint-missing" }, task.taskId);
@@ -143,15 +148,22 @@ export class TaskManager {
       }
       return task;
     }
+    const isolation = input.isolation?.mode ?? "worktree";
+    assertInPlaceAllowed(isolation === "in-place", this.debugWorkers());
+    assertExecutableWorker(input.workerId, this.debugWorkers());
     const profile = this.profiles.get(input.workerId);
     if (!profile) throw new Error(`unknown worker ${input.workerId}`);
     const driver = this.drivers.get(profile.preferredRuntime);
     if (!driver) throw new Error(`no driver for ${profile.preferredRuntime}`);
 
+    const baseCommit = repoHead(input.projectPath);
+    const targetBranch = currentBranch(input.projectPath);
+    const expectedTargetHead = baseCommit;
+    const verification = resolveVerification(input, input.projectPath, baseCommit);
+
     const taskId = randomUUID();
-    const isolation = input.isolation?.mode ?? "worktree";
     const worktree =
-      isolation === "worktree" ? createTaskWorktree(input.projectPath, taskId) : undefined;
+      isolation === "worktree" ? createTaskWorktree(input.projectPath, taskId, baseCommit) : undefined;
     const worktreePath = worktree?.worktreePath ?? input.projectPath;
     if (worktree) this.worktrees.set(taskId, worktree);
 
@@ -164,12 +176,15 @@ export class TaskManager {
       interrupted: false,
       worktreePath,
       taskBranch: worktree?.taskBranch,
-      baseCommit: worktree?.baseCommit,
+      baseCommit,
+      targetBranch,
+      expectedTargetHead,
       objective: input.objective,
       projectPath: input.projectPath,
       workerId: input.workerId,
       acceptanceCriteria: input.acceptanceCriteria,
-      verification: resolveVerification(input, worktreePath),
+      verification: verification.input,
+      verificationPlan: verification.plan,
     };
     this.tasks.set(taskId, task);
     this.byRequest.set(input.clientRequestId, taskId);
@@ -180,6 +195,7 @@ export class TaskManager {
   }
 
   private startTurn(task: TaskRecord, text: string, input?: BridgeTaskInput): TaskRecord {
+    assertExecutableWorker(task.workerId, this.debugWorkers());
     const profile = this.profiles.get(task.workerId)!;
     const driver = this.drivers.get(profile.preferredRuntime)!;
     if (task.state !== "RUNNING") this.setState(task, "RUNNING");
@@ -290,7 +306,12 @@ export class TaskManager {
         const verifyIds = task.verification?.enabled ? task.verification.verifyIds : [];
         if (verifyIds.length > 0) {
           this.setState(task, "VERIFYING");
-          const verification = runVerification(task.worktreePath ?? task.projectPath, verifyIds);
+          const verification = runVerification(
+            task.worktreePath ?? task.projectPath,
+            verifyIds,
+            task.verificationPlan,
+            Boolean(task.verification?.enabled),
+          );
           task.lastVerification = verification;
           this.journal.append("verification-result", verification, task.taskId);
         }
@@ -354,22 +375,45 @@ export class TaskManager {
     task.workerPid = undefined;
   }
 
+  private captureSnapshot(task: TaskRecord) {
+    const cwd = task.worktreePath ?? task.projectPath;
+    return buildReviewSnapshot({
+      cwd,
+      baseCommit: task.baseCommit ?? "",
+      verifyIds: task.verification?.enabled ? task.verification.verifyIds : [],
+      verificationPlan: task.verificationPlan ?? null,
+      verificationResult: task.lastVerification ?? null,
+    });
+  }
+
   reviewPacket(taskId: string): ReviewPacket {
     const task = this.require(taskId);
-    const changeSet = collectChanges(task.worktreePath ?? task.projectPath, task.baseCommit ?? "");
-    this.reviewHashes.set(taskId, changeSetHash(changeSet));
+    const snapshot = this.captureSnapshot(task);
+    if (snapshot.head !== snapshot.baseCommit) {
+      throw new BridgeError(
+        ErrorCodes.WORKER_COMMITTED,
+        "Worker committed in the worktree; V1 does not support Worker commits",
+      );
+    }
+    const digest = reviewDigest(snapshot);
+    task.reviewDigest = digest;
+    task.reviewTreeOid = snapshot.resultTreeOid;
+    this.reviewHashes.set(taskId, digest);
+    this.persist();
     return buildReviewPacket({
       objective: task.objective,
       acceptanceCriteria: task.acceptanceCriteria,
       workerStopReason: task.lastStopReason,
       verification: task.lastVerification,
-      changeSet,
+      changeSet: snapshotToChangeSet(snapshot),
+      snapshot,
+      digest,
     });
   }
 
   diff(taskId: string): string {
     const task = this.require(taskId);
-    return worktreeDiff(task.worktreePath ?? task.projectPath, task.baseCommit ?? "HEAD");
+    return this.captureSnapshot(task).diff;
   }
 
   continue(taskId: string, notes: string, expectedStateVersion: number): TaskRecord {
@@ -390,6 +434,7 @@ export class TaskManager {
   respond(taskId: string, optionId: string, expectedStateVersion: number): TaskRecord {
     const task = this.require(taskId);
     return this.mutate(task, expectedStateVersion, () => {
+      assertExecutableWorker(task.workerId, this.debugWorkers());
       if (task.state !== "WAITING_FOR_INPUT") throw new Error("respond requires WAITING_FOR_INPUT");
       const resolver = this.permissionResolvers.get(taskId);
       if (!resolver) {
@@ -411,17 +456,30 @@ export class TaskManager {
     const task = this.require(taskId);
     return this.mutate(task, expectedStateVersion, () => {
       if (task.state !== "AWAITING_REVIEW") throw new Error("approve requires AWAITING_REVIEW");
-      const changeSet = collectChanges(task.worktreePath ?? task.projectPath, task.baseCommit ?? "");
-      const current = changeSetHash(changeSet);
-      const expected = this.reviewHashes.get(taskId);
-      if (expected && expected !== current) {
-        throw new Error("review drift: ChangeSet changed after review");
+      const expected = task.reviewDigest ?? this.reviewHashes.get(taskId);
+      if (!expected) {
+        throw new BridgeError(ErrorCodes.REVIEW_DIGEST_MISSING, "bridge_review_packet must run before approve");
+      }
+      const snapshot = this.captureSnapshot(task);
+      if (snapshot.head !== snapshot.baseCommit) {
+        throw new BridgeError(
+          ErrorCodes.WORKER_COMMITTED,
+          "Worker committed in the worktree; V1 does not support Worker commits",
+        );
+      }
+      const current = reviewDigest(snapshot);
+      if (current !== expected) {
+        throw new BridgeError(ErrorCodes.REVIEW_DRIFT, "review drift: ReviewDigest changed after review");
       }
       this.setState(task, "FINALIZING");
       task.verdict = "APPROVED";
+      task.reviewTreeOid = snapshot.resultTreeOid;
       if (task.worktreePath) {
-        task.approvedCommit = checkpointCommit(
+        task.approvedCommit = checkpointFromTree(
           task.worktreePath,
+          snapshot.resultTreeOid,
+          task.baseCommit ?? snapshot.baseCommit,
+          task.taskBranch ?? "",
           `checkpoint: ${task.taskId}`,
         );
       }
@@ -438,9 +496,25 @@ export class TaskManager {
       if (task.state !== "COMPLETED" || task.verdict !== "APPROVED" || !task.approvedCommit) {
         throw new Error("apply requires an approved checkpoint");
       }
-      if (cherryPickInProgress(task.projectPath)) abortCherryPick(task.projectPath);
       const head = repoHead(task.projectPath);
       if (task.appliedHead && task.appliedHead === head) return task;
+      assertTargetIdle(task.projectPath);
+      const branch = currentBranch(task.projectPath);
+      if (task.targetBranch && branch !== task.targetBranch) {
+        throw new BridgeError(
+          ErrorCodes.TARGET_BRANCH_CHANGED,
+          `expected branch ${task.targetBranch}, currently ${branch}`,
+        );
+      }
+      if (task.expectedTargetHead && head !== task.expectedTargetHead) {
+        throw new BridgeError(
+          ErrorCodes.TARGET_HEAD_CHANGED,
+          `expected HEAD ${task.expectedTargetHead}, currently ${head}`,
+        );
+      }
+      if (workingTreeDirty(task.projectPath)) {
+        throw new BridgeError(ErrorCodes.TARGET_DIRTY, "target working tree is not clean");
+      }
       task.stateVersion += 1;
       this.journal.append("apply-claimed", { stateVersion: task.stateVersion }, task.taskId);
       this.persist();
@@ -590,10 +664,20 @@ export class TaskManager {
 
 function resolveVerification(
   input: BridgeTaskInput,
-  worktreePath: string,
-): BridgeTaskInput["verification"] {
-  if (input.verification) return input.verification;
-  const ids = listVerifyIds(worktreePath);
-  if (ids.length === 0) return undefined;
-  return { enabled: true, verifyIds: ids };
+  projectPath: string,
+  baseCommit: string,
+): { input: BridgeTaskInput["verification"]; plan: TaskRecord["verificationPlan"] } {
+  const plan = loadVerificationPlanFromCommit(projectPath, baseCommit);
+  if (input.verification?.enabled) {
+    if (!plan) {
+      throw new BridgeError(
+        ErrorCodes.VERIFICATION_PLAN_MISSING,
+        "verification requested but .agent-bridge/verify.json is missing at baseCommit",
+      );
+    }
+    return { input: input.verification, plan };
+  }
+  const ids = listVerifyIds(plan);
+  if (ids.length === 0) return { input: undefined, plan };
+  return { input: { enabled: true, verifyIds: ids }, plan };
 }

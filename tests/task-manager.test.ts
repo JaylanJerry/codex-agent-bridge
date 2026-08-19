@@ -190,11 +190,12 @@ test("approve removes worktree then apply cherry-picks onto current branch", asy
   writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "init"]);
+  mkdirSync(join(root, ".agent-bridge-data"), { recursive: true });
   const base = git(root, ["rev-parse", "HEAD"]);
   const manager = new TaskManager(
     new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } }])]]),
     new Map([["replay", replayProfile]]),
-    new Journal(join(root, "journal.ndjson")),
+    new Journal(join(root, ".agent-bridge-data", "journal.ndjson")),
   );
   const created = manager.run({
     schemaVersion: "1.2",

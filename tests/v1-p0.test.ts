@@ -187,6 +187,7 @@ test("hydrate recovers FINALIZING with uncommitted worktree by creating checkpoi
     workerId: "replay",
   });
   const first = await manager.wait(created.taskId);
+  manager.reviewPacket(first.taskId);
   const snapshot = manager.snapshot();
   const record = snapshot.tasks[0]!;
   record.state = "FINALIZING";

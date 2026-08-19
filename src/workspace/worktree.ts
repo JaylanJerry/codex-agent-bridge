@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { BridgeError, ErrorCodes } from "../core/errors.ts";
 
 function git(cwd: string, args: string[]): string {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
@@ -21,16 +22,16 @@ export type WorktreeHandle = {
   baseCommit: string;
 };
 
-export function createTaskWorktree(repoPath: string, taskId: string): WorktreeHandle {
+export function createTaskWorktree(repoPath: string, taskId: string, startPoint?: string): WorktreeHandle {
   const abs = resolve(repoPath);
-  const baseCommit = git(abs, ["rev-parse", "HEAD"]);
+  const baseCommit = startPoint ? git(abs, ["rev-parse", startPoint]) : git(abs, ["rev-parse", "HEAD"]);
   const taskBranch = `agent-bridge/${taskId}`;
   const worktreePath = join(abs, "agent-bridge", taskId);
   mkdirSync(join(abs, "agent-bridge"), { recursive: true });
   if (existsSync(worktreePath)) {
     throw new Error(`worktree already exists: ${worktreePath}`);
   }
-  git(abs, ["worktree", "add", worktreePath, "-b", taskBranch]);
+  git(abs, ["worktree", "add", worktreePath, "-b", taskBranch, baseCommit]);
   return { repoPath: abs, worktreePath, taskBranch, baseCommit };
 }
 
@@ -55,6 +56,43 @@ export function checkpointCommit(worktreePath: string, message: string): string 
   return git(worktreePath, ["rev-parse", "HEAD"]);
 }
 
+export function checkpointFromTree(
+  worktreePath: string,
+  treeOid: string,
+  baseCommit: string,
+  taskBranch: string,
+  message: string,
+): string {
+  const abs = resolve(worktreePath);
+  const baseTree = git(abs, ["rev-parse", `${baseCommit}^{tree}`]);
+  if (baseTree === treeOid) return baseCommit;
+  const commit = git(abs, [
+    "-c",
+    "user.name=agent-bridge",
+    "-c",
+    "user.email=agent-bridge@localhost",
+    "commit-tree",
+    treeOid,
+    "-p",
+    baseCommit,
+    "-m",
+    message,
+  ]);
+  const ref = taskBranch ? `refs/heads/${taskBranch}` : "HEAD";
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "update-ref", ref, commit, baseCommit], {
+    cwd: abs,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) {
+    throw new BridgeError(
+      ErrorCodes.WORKER_COMMITTED,
+      `task branch moved; expected ${baseCommit}: ${proc.stderr || proc.stdout}`,
+    );
+  }
+  return commit;
+}
+
 export function cherryPickToRepo(repoPath: string, commit: string): string {
   const abs = resolve(repoPath);
   const proc = spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", commit], {
@@ -64,11 +102,14 @@ export function cherryPickToRepo(repoPath: string, commit: string): string {
   });
   if (proc.status !== 0) {
     const detail = `${proc.stderr || proc.stdout}`;
-    spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", "--abort"], {
-      cwd: abs,
-      encoding: "utf8",
-      windowsHide: true,
-    });
+    const op = inspectGitOperation(abs);
+    if (op === "cherry-pick" || op === "sequencer") {
+      const cherryHeadPath = join(gitDir(abs), "CHERRY_PICK_HEAD");
+      const cherryHead = existsSync(cherryHeadPath) ? readFileSync(cherryHeadPath, "utf8").trim() : "";
+      if (!cherryHead || cherryHead === commit || commit.startsWith(cherryHead) || cherryHead.startsWith(commit)) {
+        abortCherryPick(abs);
+      }
+    }
     if (/now empty|previous cherry-pick is now empty|already applied/i.test(detail)) {
       return git(abs, ["rev-parse", "HEAD"]);
     }
@@ -110,9 +151,76 @@ export function gitDir(repoPath: string): string {
   return (proc.stdout ?? "").trim();
 }
 
-export function cherryPickInProgress(repoPath: string): boolean {
+export function currentBranch(repoPath: string): string {
+  return git(resolve(repoPath), ["rev-parse", "--abbrev-ref", "HEAD"]);
+}
+
+export function workingTreeDirty(repoPath: string): boolean {
+  const proc = spawnSync("git", ["-c", "core.longpaths=true", "status", "--porcelain=v1", "-uall"], {
+    cwd: resolve(repoPath),
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (proc.status !== 0) {
+    throw new Error(`git status failed: ${proc.stderr || proc.stdout}`);
+  }
+  const lines = (proc.stdout ?? "").split(/\r?\n/).filter(Boolean);
+  return lines.some((line) => {
+    const parsed = parseStatusPath(line);
+    return parsed && !isBridgeOwnedPath(parsed);
+  });
+}
+
+function parseStatusPath(line: string): string | undefined {
+  if (line.length < 4) return undefined;
+  let rest = line.slice(3);
+  if (rest.includes(" -> ")) rest = rest.split(" -> ").pop() ?? rest;
+  const trimmed = rest.trim().replace(/^"|"$/g, "");
+  return trimmed.replaceAll("\\", "/");
+}
+
+function isBridgeOwnedPath(path: string): boolean {
+  const normalized = path.replace(/^\.\//, "").replace(/\/$/, "");
+  return (
+    normalized === ".agent-bridge-data" ||
+    normalized.startsWith(".agent-bridge-data/") ||
+    normalized === "agent-bridge" ||
+    normalized.startsWith("agent-bridge/")
+  );
+}
+
+export type GitOperation =
+  | "none"
+  | "cherry-pick"
+  | "merge"
+  | "rebase"
+  | "revert"
+  | "bisect"
+  | "sequencer";
+
+export function inspectGitOperation(repoPath: string): GitOperation {
   const dir = gitDir(repoPath);
-  return existsSync(join(dir, "CHERRY_PICK_HEAD")) || existsSync(join(dir, "sequencer"));
+  if (existsSync(join(dir, "CHERRY_PICK_HEAD"))) return "cherry-pick";
+  if (existsSync(join(dir, "MERGE_HEAD"))) return "merge";
+  if (existsSync(join(dir, "REBASE_HEAD"))) return "rebase";
+  if (existsSync(join(dir, "rebase-merge"))) return "rebase";
+  if (existsSync(join(dir, "rebase-apply"))) return "rebase";
+  if (existsSync(join(dir, "REVERT_HEAD"))) return "revert";
+  if (existsSync(join(dir, "BISECT_LOG"))) return "bisect";
+  if (existsSync(join(dir, "sequencer"))) return "sequencer";
+  return "none";
+}
+
+export function assertTargetIdle(repoPath: string): void {
+  const op = inspectGitOperation(repoPath);
+  if (op !== "none") {
+    throw new BridgeError(ErrorCodes.TARGET_REPO_BUSY, `git operation in progress: ${op}`);
+  }
+}
+
+export function cherryPickInProgress(repoPath: string): boolean {
+  const op = inspectGitOperation(repoPath);
+  return op === "cherry-pick" || op === "sequencer";
 }
 
 export function abortCherryPick(repoPath: string): void {

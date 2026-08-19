@@ -8,6 +8,15 @@ import { acquireCoreLock, CoreLockHeldError, type CoreLockHandle } from "../pers
 import { ReplayRuntimeDriver, type ReplayTurn } from "../runtime/replay/driver.ts";
 import { AcpRuntimeDriver } from "../runtime/acp/driver.ts";
 import { TaskManager, StateVersionConflictError, TaskAlreadyExistsError } from "../core/task-manager.ts";
+import { BridgeError } from "../core/errors.ts";
+import { PathEscapeError } from "../workspace/safe-path.ts";
+import {
+  debugWorkersAllowed,
+  assertCallableWorker,
+  assertExecutableWorker,
+  assertFilesAllowed,
+  assertInPlaceAllowed,
+} from "../workers/debug.ts";
 import { listAgents, runDoctor, type AgentInfo, type DoctorCheck } from "../core/doctor.ts";
 import {
   claudeProfile,
@@ -76,15 +85,19 @@ function dataDirFor(projectPath: string): string {
 function fail(error: unknown): BridgeResult {
   const err = error instanceof Error ? error : new Error(String(error));
   const code =
-    error instanceof StateVersionConflictError
-      ? "STATE_VERSION_CONFLICT"
-      : error instanceof TaskAlreadyExistsError
-        ? "TASK_ALREADY_EXISTS"
-        : error instanceof CoreLockHeldError
-          ? "CORE_LOCK_HELD"
-          : error instanceof TaskStoreCorruptedError
-            ? "TASK_STORE_CORRUPTED"
-            : "ERROR";
+    error instanceof BridgeError
+      ? error.code
+      : error instanceof PathEscapeError
+        ? error.code
+        : error instanceof StateVersionConflictError
+          ? "STATE_VERSION_CONFLICT"
+          : error instanceof TaskAlreadyExistsError
+            ? "TASK_ALREADY_EXISTS"
+            : error instanceof CoreLockHeldError
+              ? "CORE_LOCK_HELD"
+              : error instanceof TaskStoreCorruptedError
+                ? "TASK_STORE_CORRUPTED"
+                : "ERROR";
   return { ok: false, error: err.message, code };
 }
 
@@ -111,9 +124,12 @@ function ensureWorker(slot: CoreSlot, workerId: string): void {
     if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
     slot.profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
   }
-  if (workerId === "fake" && !slot.profiles.has("fake")) {
-    if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
-    slot.profiles.set("fake", fakeAcpProfile(repoRoot));
+  if (workerId === "fake") {
+    if (!debugWorkersAllowed()) return;
+    if (!slot.profiles.has("fake")) {
+      if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
+      slot.profiles.set("fake", fakeAcpProfile(repoRoot));
+    }
   }
 }
 
@@ -125,8 +141,10 @@ function getCore(
   const key = coreKey(projectPath);
   const existing = cores.get(key);
   if (existing) {
-    existing.drivers.set("replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : []));
-    existing.manager.invalidateRuntimeSessions("replay");
+    if (debugWorkersAllowed()) {
+      existing.drivers.set("replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : []));
+      existing.manager.invalidateRuntimeSessions("replay");
+    }
     for (const workerId of extraWorkers) ensureWorker(existing, workerId);
     return existing;
   }
@@ -137,15 +155,17 @@ function getCore(
     const store = new FileTaskStore(join(dir, "tasks.json"));
     const snapshot = store.load();
     const workerIds = new Set<string>([
-      "replay",
+      ...(debugWorkersAllowed() ? ["replay"] : []),
       ...extraWorkers,
       ...snapshot.tasks.map((task) => task.workerId),
     ]);
-    const drivers = new Map<string, RuntimeDriver>([
-      ["replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : [])],
-    ]);
-    const profiles = new Map<string, WorkerProfile>([["replay", replayProfile]]);
-    if ([...workerIds].some((id) => id === "claude" || id === "deepseek" || id === "fake")) {
+    const drivers = new Map<string, RuntimeDriver>();
+    const profiles = new Map<string, WorkerProfile>();
+    if (debugWorkersAllowed() && workerIds.has("replay")) {
+      drivers.set("replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : []));
+      profiles.set("replay", replayProfile);
+    }
+    if ([...workerIds].some((id) => id === "claude" || id === "deepseek" || (id === "fake" && debugWorkersAllowed()))) {
       drivers.set("acp", new AcpRuntimeDriver());
     }
     if (workerIds.has("claude")) {
@@ -154,7 +174,7 @@ function getCore(
     if (workerIds.has("deepseek")) {
       profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
     }
-    if (workerIds.has("fake")) {
+    if (debugWorkersAllowed() && workerIds.has("fake")) {
       profiles.set("fake", fakeAcpProfile(repoRoot));
     }
     const manager = new TaskManager(drivers, profiles, new Journal(join(dir, "journal.ndjson")));
@@ -218,12 +238,13 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
     };
 
     if (request.command === "run") {
+      assertInPlaceAllowed(request.inPlace);
       const input: BridgeTaskInput = {
         schemaVersion: "1.2",
         clientRequestId: request.clientRequestId ?? `req-${Date.now()}`,
         objective: required(request.objective, "objective"),
         projectPath,
-        workerId: request.worker ?? "replay",
+        workerId: assertCallableWorker(request.worker, request.files),
         isolation: { mode: request.inPlace ? "in-place" : "worktree" },
         verification:
           (request.verifyIds ?? []).length > 0
@@ -256,8 +277,12 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       return { ok: true, task: updated };
     }
     if (request.command === "continue") {
+      const taskId = required(request.task, "task");
+      const current = manager.get(taskId);
+      assertExecutableWorker(current.workerId);
+      assertFilesAllowed(current.workerId, request.files);
       const updated = manager.continue(
-        required(request.task, "task"),
+        taskId,
         required(request.notes, "notes"),
         Number(request.stateVersion),
       );
