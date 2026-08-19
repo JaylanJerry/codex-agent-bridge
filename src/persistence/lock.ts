@@ -1,3 +1,4 @@
+/** One Writer Core per data directory. Not a single-task limit. */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";

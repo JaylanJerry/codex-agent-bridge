@@ -94,6 +94,22 @@ export function checkpointFromTree(
   return commit;
 }
 
+export function isCherryPickLanded(
+  repoPath: string,
+  preApplyHead: string,
+  approvedCommit: string,
+  head?: string,
+): boolean {
+  const abs = resolve(repoPath);
+  const current = head ?? git(abs, ["rev-parse", "HEAD"]);
+  if (current === preApplyHead) return false;
+  const parent = revParseOptional(abs, `${current}^`);
+  if (parent !== preApplyHead) return false;
+  const headTree = git(abs, ["rev-parse", `${current}^{tree}`]);
+  const approvedTree = git(abs, ["rev-parse", `${approvedCommit}^{tree}`]);
+  return headTree === approvedTree;
+}
+
 export function cherryPickToRepo(repoPath: string, commit: string): string {
   const abs = resolve(repoPath);
   const proc = spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", commit], {

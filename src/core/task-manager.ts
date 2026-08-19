@@ -7,6 +7,8 @@ import { BridgeError, ErrorCodes } from "./errors.ts";
 import {
   assertTargetIdle,
   checkpointFromTree,
+  inspectGitOperation,
+  isCherryPickLanded,
   cherryPickToRepo,
   createTaskWorktree,
   currentBranch,
@@ -22,7 +24,7 @@ import {
 import { buildReviewSnapshot, reviewDigest, snapshotToChangeSet } from "../review/snapshot.ts";
 import { buildReviewPacket, type ReviewPacket } from "../review/packet.ts";
 import { listVerifyIds, loadVerificationPlanFromCommit, runVerification } from "../verification/runner.ts";
-import type { PermissionMode, PermissionOutcome, RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
+import type { PermissionOutcome, RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
 import { autoSelectPermission } from "../runtime/contract.ts";
 import { assertExecutableWorker, assertInPlaceAllowed, debugWorkersAllowed } from "../workers/debug.ts";
 
@@ -50,7 +52,6 @@ export class TaskManager {
   private readonly permissionResolvers = new Map<string, (outcome: PermissionOutcome) => void>();
   private readonly turnEpoch = new Map<string, number>();
   private readonly mutating = new Set<string>();
-  private permissionMode: PermissionMode = "auto";
 
   private persistHook: (() => void) | undefined;
 
@@ -89,6 +90,11 @@ export class TaskManager {
       return;
     }
     if (isTerminalState(task.state)) {
+      try {
+        this.reconcileApplication(task, false);
+      } catch (error) {
+        this.journal.append("apply-recovery-failed", { error: String(error) }, task.taskId);
+      }
       if (task.worktreePath && task.worktreePath !== task.projectPath) this.cleanupWorktree(task);
       return;
     }
@@ -186,6 +192,7 @@ export class TaskManager {
       acceptanceCriteria: input.acceptanceCriteria,
       verification: verification.input,
       verificationPlan: verification.plan,
+      permissionMode: input.permissionMode ?? "auto",
     };
     this.tasks.set(taskId, task);
     this.byRequest.set(input.clientRequestId, taskId);
@@ -219,13 +226,9 @@ export class TaskManager {
     return this.turnEpoch.get(taskId) === epoch;
   }
 
-  setPermissionMode(mode: PermissionMode): void {
-    this.permissionMode = mode;
-  }
-
   invalidateRuntimeSessions(kind: RuntimeDriver["kind"]): void {
-    for (const [taskId, session] of this.sessions) {
-      if (session.profile.preferredRuntime === kind) this.sessions.delete(taskId);
+    for (const [id, session] of this.sessions) {
+      if (session.profile.preferredRuntime === kind) this.sessions.delete(id);
     }
   }
 
@@ -283,7 +286,7 @@ export class TaskManager {
       if (driver.setPermissionHandler) {
         driver.setPermissionHandler(session.sessionId, async (request) => {
           if (!this.isCurrentTurn(task.taskId, epoch)) return { outcome: "cancelled" as const };
-          if (this.permissionMode === "auto") return autoSelectPermission(request.options);
+          if ((task.permissionMode ?? "auto") === "auto") return autoSelectPermission(request.options);
           return await new Promise<PermissionOutcome>((resolve) => {
             this.permissionResolvers.set(task.taskId, resolve);
             task.pendingInput = { kind: "permission", ...request };
@@ -497,7 +500,11 @@ export class TaskManager {
       if (task.state !== "COMPLETED" || task.verdict !== "APPROVED" || !task.approvedCommit) {
         throw new Error("apply requires an approved checkpoint");
       }
+      this.reconcileApplication(task, true);
       const head = repoHead(task.projectPath);
+      if (task.application?.state === "APPLIED" && task.appliedHead && task.appliedHead === head) {
+        return task;
+      }
       if (task.appliedHead && task.appliedHead === head) return task;
       assertTargetIdle(task.projectPath);
       const branch = currentBranch(task.projectPath);
@@ -507,23 +514,65 @@ export class TaskManager {
           `expected branch ${task.targetBranch}, currently ${branch}`,
         );
       }
-      if (task.expectedTargetHead && head !== task.expectedTargetHead) {
+      const expectedHead = task.application?.state === "CLAIMED" ? task.application.preApplyHead : task.expectedTargetHead;
+      if (expectedHead && head !== expectedHead) {
         throw new BridgeError(
           ErrorCodes.TARGET_HEAD_CHANGED,
-          `expected HEAD ${task.expectedTargetHead}, currently ${head}`,
+          `expected HEAD ${expectedHead}, currently ${head}`,
         );
       }
       if (workingTreeDirty(task.projectPath)) {
         throw new BridgeError(ErrorCodes.TARGET_DIRTY, "target working tree is not clean");
       }
+      if (!task.application || task.application.state !== "CLAIMED") {
+        task.application = {
+          operationId: randomUUID(),
+          taskId: task.taskId,
+          approvedCommit: task.approvedCommit,
+          targetBranch: branch,
+          preApplyHead: head,
+          state: "CLAIMED",
+        };
+      }
       task.stateVersion += 1;
-      this.journal.append("apply-claimed", { stateVersion: task.stateVersion }, task.taskId);
+      this.journal.append(
+        "apply-claimed",
+        { stateVersion: task.stateVersion, operationId: task.application.operationId },
+        task.taskId,
+      );
       this.persist();
-      task.appliedHead = cherryPickToRepo(task.projectPath, task.approvedCommit);
-      this.journal.append("applied", { head: task.appliedHead, commit: task.approvedCommit }, task.taskId);
-      this.persist();
+      const landed = cherryPickToRepo(task.projectPath, task.approvedCommit);
+      this.markApplied(task, landed);
       return task;
     });
+  }
+
+  private reconcileApplication(task: TaskRecord, throwOnBusy: boolean): void {
+    const application = task.application;
+    if (!application || application.state !== "CLAIMED" || !task.approvedCommit) return;
+    if (inspectGitOperation(task.projectPath) !== "none") {
+      if (throwOnBusy) assertTargetIdle(task.projectPath);
+      return;
+    }
+    const head = repoHead(task.projectPath);
+    if (head === application.preApplyHead) return;
+    if (isCherryPickLanded(task.projectPath, application.preApplyHead, task.approvedCommit, head)) {
+      this.markApplied(task, head);
+      return;
+    }
+    throw new BridgeError(
+      ErrorCodes.APPLY_CONFLICT,
+      `apply claim ${application.operationId} does not match HEAD ${head}`,
+    );
+  }
+
+  private markApplied(task: TaskRecord, landedHead: string): void {
+    if (!task.application) return;
+    task.application.state = "APPLIED";
+    task.application.landedHead = landedHead;
+    task.appliedHead = landedHead;
+    this.journal.append("applied", { head: landedHead, commit: task.approvedCommit, operationId: task.application.operationId }, task.taskId);
+    this.persist();
   }
 
   reject(taskId: string, expectedStateVersion: number): TaskRecord {

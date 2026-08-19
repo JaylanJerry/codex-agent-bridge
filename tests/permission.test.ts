@@ -8,6 +8,8 @@ import { spawnSync } from "node:child_process";
 import { Journal } from "../src/persistence/journal.ts";
 import { AcpRuntimeDriver } from "../src/runtime/acp/driver.ts";
 import { TaskManager } from "../src/core/task-manager.ts";
+import { ReplayRuntimeDriver } from "../src/runtime/replay/driver.ts";
+import { replayProfile } from "../src/workers/profiles.ts";
 import type { WorkerProfile } from "../src/runtime/contract.ts";
 
 const fakeAgent = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/fake-acp-agent.ts");
@@ -50,13 +52,13 @@ test("permission gate pauses for respond then writes after allow", async () => {
     new Map([["fake", fakeProfile]]),
     new Journal(join(root, "journal.ndjson")),
   );
-  manager.setPermissionMode("gate");
   const created = manager.run({
     schemaVersion: "1.2",
     clientRequestId: "perm-1",
     objective: "ASK_PERMISSION\nWRITE gated.ts\nexport const n = 1;\n",
     projectPath: root,
     workerId: "fake",
+    permissionMode: "gate",
   });
   try {
     const paused = await manager.wait(created.taskId, 15_000);
@@ -124,4 +126,59 @@ test("hydrate recovers in-flight states without a live worker", () => {
     assert.equal(recovered.pendingInput, undefined, state);
   }
   rmSync(root, { recursive: true, force: true });
+});
+
+test("permissionMode is per-task so auto cannot ungated a live gate task", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-perm-pt-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "README.md"), "base\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  const driver = new AcpRuntimeDriver();
+  const manager = new TaskManager(
+    new Map([
+      ["acp", driver],
+      ["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "auto-b.ts": "export const n = 2;\n" } }])],
+    ]),
+    new Map([
+      ["fake", fakeProfile],
+      ["replay", replayProfile],
+    ]),
+    new Journal(join(root, "journal.ndjson")),
+  );
+  const gated = manager.run({
+    schemaVersion: "1.2",
+    clientRequestId: "gate-a",
+    objective: "ASK_PERMISSION\nWRITE gated-a.ts\nexport const n = 1;\n",
+    projectPath: root,
+    workerId: "fake",
+    permissionMode: "gate",
+  });
+  try {
+    const paused = await manager.wait(gated.taskId, 15_000);
+    assert.equal(paused.state, "WAITING_FOR_INPUT");
+    const automatic = manager.run({
+      schemaVersion: "1.2",
+      clientRequestId: "auto-b",
+      objective: "bump",
+      projectPath: root,
+      workerId: "replay",
+      permissionMode: "auto",
+    });
+    const done = await manager.wait(automatic.taskId, 15_000);
+    assert.equal(manager.get(gated.taskId).state, "WAITING_FOR_INPUT");
+    assert.equal(manager.get(gated.taskId).permissionMode, "gate");
+    assert.equal(done.state, "AWAITING_REVIEW");
+    assert.equal(done.permissionMode, "auto");
+    assert.equal(existsSync(join(paused.worktreePath!, "gated-a.ts")), false);
+  } finally {
+    const task = manager.get(gated.taskId);
+    if (!["COMPLETED", "FAILED", "CANCELLED"].includes(task.state)) {
+      await manager.cancel(task.taskId, task.stateVersion).catch(() => undefined);
+    }
+    await manager.drain(task.taskId).catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
 });

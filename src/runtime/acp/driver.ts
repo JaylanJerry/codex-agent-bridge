@@ -190,11 +190,22 @@ export class AcpRuntimeDriver implements RuntimeDriver {
         resolve();
         return;
       }
-      const timer = setTimeout(resolve, 1000);
+      const timer = setTimeout(() => {
+        try {
+          live.child.kill("SIGKILL");
+        } catch {
+          // already dead
+        }
+        resolve();
+      }, 1000);
       live.child.once("exit", () => {
         clearTimeout(timer);
         resolve();
       });
     });
+    live.child.stdin?.destroy();
+    live.child.stdout?.destroy();
+    live.child.stderr?.destroy();
+    live.child.unref();
   }
 }
