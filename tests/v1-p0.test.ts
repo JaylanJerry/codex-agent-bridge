@@ -13,6 +13,7 @@ import { ReplayRuntimeDriver } from "../src/runtime/replay/driver.ts";
 import { TaskManager } from "../src/core/task-manager.ts";
 import { replayProfile } from "../src/workers/profiles.ts";
 import { createTaskWorktree } from "../src/workspace/worktree.ts";
+import { ensureRepoDataDir } from "../src/persistence/layout.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const holdLock = join(repoRoot, "tests/fixtures/hold-lock.ts");
@@ -49,7 +50,7 @@ async function waitForFile(path: string, timeoutMs = 10_000): Promise<void> {
 
 test("second writer gets CORE_LOCK_HELD and does not hydrate", async () => {
   const root = initRepo();
-  const dataDir = join(root, ".agent-bridge-data");
+  const dataDir = ensureRepoDataDir(root);
   const ready = join(root, "ready.txt");
   const child = spawn(process.execPath, ["--import", "tsx", holdLock, dataDir, ready], {
     windowsHide: true,
@@ -91,7 +92,7 @@ test("unreadable lock is fail-closed and is not deleted", () => {
 
 test("corrupt tasks.json is TASK_STORE_CORRUPTED not an empty library", async () => {
   const root = initRepo();
-  const dataDir = join(root, ".agent-bridge-data");
+  const dataDir = ensureRepoDataDir(root);
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(join(dataDir, "tasks.json"), "{not json");
   const store = new FileTaskStore(join(dataDir, "tasks.json"));
@@ -127,6 +128,16 @@ test("tasks.json save replaces via temp file", () => {
   });
   const loaded = store.load();
   assert.equal(loaded.tasks[0]?.taskId, "t1");
+  assert.equal(loaded.storeVersion, 2);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("future storeVersion is TASK_STORE_CORRUPTED", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-storever-"));
+  const path = join(dir, "tasks.json");
+  writeFileSync(path, `${JSON.stringify({ storeVersion: 99, tasks: [], byRequest: [], reviewHashes: [] })}\n`);
+  const store = new FileTaskStore(path);
+  assert.throws(() => store.load(), /unsupported storeVersion 99/);
   rmSync(dir, { recursive: true, force: true });
 });
 

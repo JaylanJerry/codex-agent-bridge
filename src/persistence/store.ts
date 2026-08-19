@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import type { TaskRecord } from "../core/state.ts";
+import { STORE_VERSION } from "./layout.ts";
 
 export class TaskStoreCorruptedError extends Error {
   readonly code = "TASK_STORE_CORRUPTED";
@@ -24,13 +25,14 @@ export class TaskStoreCorruptedError extends Error {
 }
 
 export type TaskSnapshot = {
+  storeVersion?: number;
   tasks: TaskRecord[];
   byRequest: [string, string][];
   reviewHashes: [string, string][];
 };
 
 function emptySnapshot(): TaskSnapshot {
-  return { tasks: [], byRequest: [], reviewHashes: [] };
+  return { storeVersion: STORE_VERSION, tasks: [], byRequest: [], reviewHashes: [] };
 }
 
 function atomicWriteFile(path: string, contents: string): void {
@@ -69,7 +71,16 @@ export class FileTaskStore {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new Error("root must be an object");
       }
+      const storeVersion =
+        typeof parsed.storeVersion === "number" ? parsed.storeVersion : 1;
+      if (!Number.isInteger(storeVersion) || storeVersion < 1) {
+        throw new Error("storeVersion must be a positive integer");
+      }
+      if (storeVersion > STORE_VERSION) {
+        throw new Error(`unsupported storeVersion ${storeVersion}`);
+      }
       return {
+        storeVersion,
         tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
         byRequest: Array.isArray(parsed.byRequest) ? parsed.byRequest : [],
         reviewHashes: Array.isArray(parsed.reviewHashes) ? parsed.reviewHashes : [],
@@ -80,6 +91,9 @@ export class FileTaskStore {
   }
 
   save(snapshot: TaskSnapshot): void {
-    atomicWriteFile(this.path, `${JSON.stringify(snapshot, null, 2)}\n`);
+    atomicWriteFile(
+      this.path,
+      `${JSON.stringify({ ...snapshot, storeVersion: STORE_VERSION }, null, 2)}\n`,
+    );
   }
 }
