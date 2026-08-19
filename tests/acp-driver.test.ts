@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { AcpRuntimeDriver } from "../src/runtime/acp/driver.ts";
+import { AcpRuntimeDriver, ACP_STDERR_LIMIT, capText } from "../src/runtime/acp/driver.ts";
 import type { WorkerProfile } from "../src/runtime/contract.ts";
 
 const fakeAgent = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/fake-acp-agent.ts");
+const hangAgent = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/hang-acp-agent.ts");
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function git(cwd: string, args: string[]) {
@@ -71,3 +72,59 @@ test("AcpRuntimeDriver drives a fake ACP worker through write and cancel", async
   await resumedDriver.close(resumed);
   rmSync(root, { recursive: true, force: true });
 });
+
+function hangProfile(): WorkerProfile {
+  return {
+    id: "hang",
+    displayName: "Hang ACP",
+    preferredRuntime: "acp",
+    ownership: "external-owned",
+    launch: {
+      command: process.execPath,
+      args: ["--import", "tsx", hangAgent],
+      cwd: repoRoot,
+    },
+  };
+}
+
+test("capText keeps the tail within the limit", () => {
+  assert.equal(capText("abc", 8), "abc");
+  assert.equal(capText("abcdefghijklmnopqrstuvwxyz", 8), "stuvwxyz");
+});
+
+test("ACP start times out a worker that never initializes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-acp-hang-"));
+  const driver = new AcpRuntimeDriver();
+  const began = Date.now();
+  await assert.rejects(
+    () => driver.start(hangProfile(), root, { startupTimeoutMs: 800 }),
+    /ACP startup timed out after 800ms/,
+  );
+  assert.ok(Date.now() - began < 3_000);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("ACP start abort signal kills a hanging handshake", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-acp-abort-"));
+  const driver = new AcpRuntimeDriver();
+  const controller = new AbortController();
+  const pending = driver.start(hangProfile(), root, { signal: controller.signal, startupTimeoutMs: 30_000 });
+  setTimeout(() => controller.abort(), 80);
+  await assert.rejects(() => pending, /ACP startup aborted/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("ACP start error message caps worker stderr", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-acp-stderr-"));
+  const driver = new AcpRuntimeDriver();
+  const error = await driver.start(hangProfile(), root, { startupTimeoutMs: 1_200 }).then(
+    () => undefined,
+    (caught: unknown) => caught,
+  );
+  assert.ok(error instanceof Error);
+  assert.match(error.message, /ACP startup timed out/);
+  assert.ok(error.message.length < ACP_STDERR_LIMIT + 200);
+  assert.match(error.message, /noise/);
+  rmSync(root, { recursive: true, force: true });
+});
+
