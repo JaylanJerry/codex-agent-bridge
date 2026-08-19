@@ -9,6 +9,7 @@ import { createKillOnCloseJob } from "../process/job-object.ts";
 import { isTerminalState, type TaskRecord } from "./state.ts";
 import { isProtectedAgentBridgeWorktree, listAgentBridgeWorktrees, worktreeKey } from "../workspace/worktree.ts";
 import { inspectCoreLock } from "../persistence/lock.ts";
+import { existingRepoDataDir, existingTasksPath } from "../persistence/layout.ts";
 import { codexHome } from "../paths.ts";
 
 export type DoctorCheck = {
@@ -113,8 +114,8 @@ function skillInstalled(): DoctorCheck {
 }
 
 function loadTaskStore(projectPath: string): { tasks: TaskRecord[]; corrupted?: string } {
-  const path = join(projectPath, ".agent-bridge-data", "tasks.json");
-  if (!existsSync(path)) return { tasks: [] };
+  const path = existingTasksPath(projectPath);
+  if (!path) return { tasks: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as { tasks?: TaskRecord[] };
     return { tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [] };
@@ -215,8 +216,8 @@ export function runDoctor(opts: { repoRoot: string; projectPath?: string }): Doc
         : ".agent-bridge/verify.json missing (verification will skip)",
     });
     if (gitDir) {
-      const dataDir = join(opts.projectPath, ".agent-bridge-data");
-      if (existsSync(dataDir)) {
+      const dataDir = existingRepoDataDir(opts.projectPath);
+      if (dataDir) {
         const lock = inspectCoreLock(dataDir);
         checks.push({
           id: "core-lock",

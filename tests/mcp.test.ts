@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { McpStdioClient } from "../src/mcp/client.ts";
 import type { BridgeResult } from "../src/api/client.ts";
+import { repoDataDir } from "../src/persistence/layout.ts";
 
 function git(cwd: string, args: string[]) {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
@@ -195,11 +196,17 @@ test("MCP hydrates leftover RUNNING into AWAITING_REVIEW and persists it", async
     assert.equal(listed.tasks?.[0]?.state, "AWAITING_REVIEW");
     assert.equal(listed.tasks?.[0]?.interrupted, true);
     assert.equal(listed.tasks?.[0]?.sessionId, "replay-old");
-    const saved = JSON.parse(readFileSync(join(root, ".agent-bridge-data", "tasks.json"), "utf8")) as {
+    const saved = JSON.parse(readFileSync(join(repoDataDir(root), "tasks.json"), "utf8")) as {
       tasks: { state: string; interrupted: boolean }[];
+      storeVersion?: number;
     };
     assert.equal(saved.tasks[0]?.state, "AWAITING_REVIEW");
     assert.equal(saved.tasks[0]?.interrupted, true);
+    assert.equal(saved.storeVersion, 2);
+    const leftover = JSON.parse(readFileSync(join(root, ".agent-bridge-data", "tasks.json"), "utf8")) as {
+      tasks: { state: string }[];
+    };
+    assert.equal(leftover.tasks[0]?.state, "RUNNING");
   } finally {
     client.close();
     rmSync(root, { recursive: true, force: true });

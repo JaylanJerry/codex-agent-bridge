@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -32,6 +32,8 @@ test("creates isolated worktree and checkpoint commit", () => {
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "init"]);
   const handle = createTaskWorktree(root, "task-1");
+  assert.match(handle.worktreePath.replaceAll("\\", "/"), /\/worktrees\/task-1$/);
+  assert.equal(existsSync(join(root, "agent-bridge")), false);
   writeFileSync(join(handle.worktreePath, "wip.ts"), "export const n = 1;\n");
   const commit = checkpointCommit(handle.worktreePath, "checkpoint: task-1");
   assert.notEqual(commit, handle.baseCommit);
@@ -43,6 +45,7 @@ test("creates isolated worktree and checkpoint commit", () => {
 test("agentBridgeWorktreeId reads the task folder name", () => {
   assert.equal(agentBridgeWorktreeId("/tmp/repo/agent-bridge/abc"), "abc");
   assert.equal(agentBridgeWorktreeId("/tmp/repo/agent-bridge/abc/"), "abc");
+  assert.equal(agentBridgeWorktreeId("/tmp/home/repos/deadbeef/worktrees/abc"), "abc");
   assert.equal(isProtectedAgentBridgeWorktree("/tmp/repo/agent-bridge/abc", new Set(), new Set(["abc"])), true);
   assert.equal(isProtectedAgentBridgeWorktree("/tmp/repo/agent-bridge/other", new Set(), new Set(["abc"])), false);
 });

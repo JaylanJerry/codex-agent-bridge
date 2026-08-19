@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { BridgeError, ErrorCodes } from "../core/errors.ts";
+import { repoDataDir, taskWorktreePath } from "../persistence/layout.ts";
 
 function git(cwd: string, args: string[]): string {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
@@ -26,8 +27,8 @@ export function createTaskWorktree(repoPath: string, taskId: string, startPoint?
   const abs = resolve(repoPath);
   const baseCommit = startPoint ? git(abs, ["rev-parse", startPoint]) : git(abs, ["rev-parse", "HEAD"]);
   const taskBranch = `agent-bridge/${taskId}`;
-  const worktreePath = join(abs, "agent-bridge", taskId);
-  mkdirSync(join(abs, "agent-bridge"), { recursive: true });
+  const worktreePath = taskWorktreePath(abs, taskId);
+  mkdirSync(dirname(worktreePath), { recursive: true });
   if (existsSync(worktreePath)) {
     throw new Error(`worktree already exists: ${worktreePath}`);
   }
@@ -274,7 +275,9 @@ export function worktreeKey(path: string): string {
 }
 
 export function agentBridgeWorktreeId(path: string): string | undefined {
-  const match = /(?:^|\/)agent-bridge\/([^/]+)\/?$/i.exec(canonicalWorktreePath(path).replaceAll("\\", "/"));
+  const match = /(?:^|\/)(?:agent-bridge|worktrees)\/([^/]+)\/?$/i.exec(
+    canonicalWorktreePath(path).replaceAll("\\", "/"),
+  );
   return match?.[1];
 }
 
@@ -296,17 +299,27 @@ export function listAgentBridgeWorktrees(repoPath: string): string[] {
     windowsHide: true,
   });
   if (proc.status !== 0) return [];
+  const homeWorktrees = worktreeKey(join(repoDataDir(repoPath), "worktrees"));
   const paths: string[] = [];
   for (const line of proc.stdout.split(/\r?\n/)) {
     if (!line.startsWith("worktree ")) continue;
     const path = line.slice("worktree ".length);
-    if (/[\\/]agent-bridge[\\/]/i.test(path)) paths.push(canonicalWorktreePath(path));
+    const key = worktreeKey(path);
+    const leftover = /[\\/]agent-bridge[\\/]/i.test(path);
+    if (leftover || key === homeWorktrees || key.startsWith(`${homeWorktrees}/`)) {
+      paths.push(canonicalWorktreePath(path));
+    }
   }
   return paths;
 }
 
 export function removeEmptyAgentBridgeDir(repoPath: string): void {
-  const dir = join(resolve(repoPath), "agent-bridge");
-  if (!existsSync(dir)) return;
-  if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+  const legacy = join(resolve(repoPath), "agent-bridge");
+  if (existsSync(legacy) && readdirSync(legacy).length === 0) {
+    rmSync(legacy, { recursive: true, force: true });
+  }
+  const worktrees = join(repoDataDir(repoPath), "worktrees");
+  if (existsSync(worktrees) && readdirSync(worktrees).length === 0) {
+    rmSync(worktrees, { recursive: true, force: true });
+  }
 }

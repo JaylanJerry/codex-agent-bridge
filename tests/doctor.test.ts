@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { runDoctor } from "../src/core/doctor.ts";
 import { dispatch } from "../src/api/client.ts";
 import { createTaskWorktree } from "../src/workspace/worktree.ts";
+import { ensureRepoDataDir } from "../src/persistence/layout.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -62,9 +63,8 @@ test("doctor treats completed-task worktrees as orphans", async () => {
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "init"]);
   const leftover = createTaskWorktree(root, "old-completed");
-  mkdirSync(join(root, ".agent-bridge-data"), { recursive: true });
   writeFileSync(
-    join(root, ".agent-bridge-data", "tasks.json"),
+    join(ensureRepoDataDir(root), "tasks.json"),
     JSON.stringify({
       tasks: [
         {
