@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, chmodSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,7 +10,13 @@ import { TaskManager } from "../src/core/task-manager.ts";
 import { BridgeError } from "../src/core/errors.ts";
 import { replayProfile } from "../src/workers/profiles.ts";
 import { PathEscapeError, safeJoinWorktree } from "../src/workspace/safe-path.ts";
-import { assertCallableWorker } from "../src/workers/debug.ts";
+import {
+  assertCallableWorker,
+  assertFilesAllowed,
+  assertInPlaceAllowed,
+} from "../src/workers/debug.ts";
+import { parseDiffRawZ, writeWorktreeResultTree } from "../src/review/snapshot.ts";
+import { checkpointFromTree } from "../src/workspace/worktree.ts";
 
 function git(cwd: string, args: string[]) {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
@@ -33,11 +39,16 @@ function initRepo(): string {
   return root;
 }
 
+function dataJournal(root: string) {
+  mkdirSync(join(root, ".agent-bridge-data"), { recursive: true });
+  return new Journal(join(root, ".agent-bridge-data", "journal.ndjson"));
+}
+
 async function replayEdit(root: string, files: Record<string, string>) {
   const manager = new TaskManager(
     new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files }])]]),
     new Map([["replay", replayProfile]]),
-    new Journal(join(root, "journal.ndjson")),
+    dataJournal(root),
   );
   const created = manager.run({
     schemaVersion: "1.2",
@@ -137,7 +148,7 @@ test("replay files cannot escape the worktree", async () => {
   const manager = new TaskManager(
     new Map([["replay", driver]]),
     new Map([["replay", replayProfile]]),
-    new Journal(join(root, "journal.ndjson")),
+    dataJournal(root),
   );
   const created = manager.run({
     schemaVersion: "1.2",
@@ -156,7 +167,7 @@ test("run fails closed when verification is required but baseCommit has no plan"
   const manager = new TaskManager(
     new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } }])]]),
     new Map([["replay", replayProfile]]),
-    new Journal(join(root, "journal.ndjson")),
+    dataJournal(root),
   );
   assert.throws(
     () =>
@@ -189,4 +200,225 @@ test("production API requires an explicit real worker", () => {
     return true;
   });
   assert.equal(assertCallableWorker("claude", undefined, false), "claude");
+  assert.throws(() => assertCallableWorker("claude", { "a.ts": "x" }, true), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "WORKER_NOT_ALLOWED");
+    return true;
+  });
+  assert.throws(() => assertInPlaceAllowed(true, false), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "IN_PLACE_NOT_ALLOWED");
+    return true;
+  });
+  assert.throws(() => assertFilesAllowed("claude", { "a.ts": "x" }, true), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "WORKER_NOT_ALLOWED");
+    return true;
+  });
+  assert.throws(() => parseDiffRawZ(":160000 160000 abcdef0 abcdef1 M\0vendor\0"), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "GITLINK_NOT_SUPPORTED");
+    return true;
+  });
 });
+
+test("untracked filename with arrow is reviewed, not parsed as rename", async () => {
+  const parsed = parseDiffRawZ(":000000 100644 0000000 abcdef0 A\0a -> b\0");
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0]?.path, "a -> b");
+  assert.equal(parsed[0]?.change, "added");
+  if (process.platform === "win32") return;
+  const root = initRepo();
+  const { manager, first } = await replayEdit(root, { "a -> b": "arrow-name\n" });
+  const packet = manager.reviewPacket(first.taskId);
+  assert.ok(packet.changedFiles.some((file) => file.path.replaceAll("\\", "/") === "a -> b"));
+  assert.equal(packet.changedFiles.find((file) => file.path.replaceAll("\\", "/") === "a -> b")?.change, "added");
+  assert.match(packet.diff, /arrow-name/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("checkpoint commits the reviewed tree, not later worktree writes", async () => {
+  const root = initRepo();
+  const { first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
+  const tree = writeWorktreeResultTree(first.worktreePath!);
+  writeFileSync(join(first.worktreePath!, "src.ts"), "export const v = 99;\n");
+  const commit = checkpointFromTree(first.worktreePath!, tree, "checkpoint: frozen");
+  assert.match(git(first.worktreePath!, ["show", `${commit}:src.ts`]), /export const v = 2/);
+  assert.equal(git(first.worktreePath!, ["show", `${commit}:src.ts`]).includes("99"), false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("untracked binary is reviewed as a git binary patch", async () => {
+  const root = initRepo();
+  const { manager, first } = await replayEdit(root, {});
+  writeFileSync(join(first.worktreePath!, "blob.bin"), Buffer.from([0, 1, 2, 255, 0]));
+  const packet = manager.reviewPacket(first.taskId);
+  assert.ok(packet.changedFiles.some((file) => file.path.replaceAll("\\", "/") === "blob.bin"));
+  assert.match(packet.diff, /GIT binary patch|literal /);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("root journal.ndjson makes apply TARGET_DIRTY", async () => {
+  const root = initRepo();
+  const { manager, first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
+  manager.reviewPacket(first.taskId);
+  const approved = manager.approve(first.taskId, first.stateVersion);
+  writeFileSync(join(root, "journal.ndjson"), "{}\n");
+  assert.throws(() => manager.apply(approved.taskId, approved.stateVersion), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "TARGET_DIRTY");
+    return true;
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("production cannot continue a persisted replay task", async () => {
+  const root = initRepo();
+  const { manager, first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
+  manager.reviewPacket(first.taskId);
+  const locked = new TaskManager(
+    new Map([["replay", new ReplayRuntimeDriver([])]]),
+    new Map([["replay", replayProfile]]),
+    dataJournal(root),
+    () => false,
+  );
+  locked.hydrate(manager.snapshot());
+  assert.equal(locked.get(first.taskId).state, "AWAITING_REVIEW");
+  assert.throws(() => locked.continue(first.taskId, "again", first.stateVersion), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "WORKER_NOT_ALLOWED");
+    return true;
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("production inPlace is rejected", () => {
+  const root = initRepo();
+  const manager = new TaskManager(
+    new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "x\n" } }])]]),
+    new Map([["replay", replayProfile]]),
+    dataJournal(root),
+    () => false,
+  );
+  assert.throws(
+    () =>
+      manager.run({
+        schemaVersion: "1.2",
+        clientRequestId: "inplace",
+        objective: "edit",
+        projectPath: root,
+        workerId: "replay",
+        isolation: { mode: "in-place" },
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof BridgeError);
+      assert.equal(error.code, "IN_PLACE_NOT_ALLOWED");
+      return true;
+    },
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("invalid verify.json at baseCommit fails closed even without explicit verification", () => {
+  const root = initRepo();
+  mkdirSync(join(root, ".agent-bridge"), { recursive: true });
+  writeFileSync(join(root, ".agent-bridge", "verify.json"), "{not-json");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "bad verify"]);
+  const manager = new TaskManager(
+    new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } }])]]),
+    new Map([["replay", replayProfile]]),
+    dataJournal(root),
+  );
+  assert.throws(
+    () =>
+      manager.run({
+        schemaVersion: "1.2",
+        clientRequestId: "bad-plan",
+        objective: "edit",
+        projectPath: root,
+        workerId: "replay",
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof BridgeError);
+      assert.equal(error.code, "VERIFICATION_PLAN_INVALID");
+      return true;
+    },
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("verify.json whitespace is not drift; delete and invalid are", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ab-p0-verify-"));
+  git(root, ["init"]);
+  git(root, ["config", "user.name", "t"]);
+  git(root, ["config", "user.email", "t@t"]);
+  writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
+  mkdirSync(join(root, ".agent-bridge"), { recursive: true });
+  const plan = {
+    schemaVersion: "1.0",
+    commands: { ok: { exe: process.execPath, args: ["-e", "process.stdout.write('ok')"] } },
+  };
+  writeFileSync(join(root, ".agent-bridge", "verify.json"), JSON.stringify(plan, null, 2));
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  const { manager, first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
+  writeFileSync(join(first.worktreePath!, ".agent-bridge", "verify.json"), JSON.stringify(plan));
+  const unchanged = manager.reviewPacket(first.taskId);
+  assert.equal(
+    unchanged.warnings.some((warning) => /verification config/i.test(warning)),
+    false,
+  );
+  assert.deepEqual(unchanged.verifyIds, ["ok"]);
+  unlinkSync(join(first.worktreePath!, ".agent-bridge", "verify.json"));
+  const deleted = manager.reviewPacket(first.taskId);
+  assert.ok(deleted.warnings.some((warning) => /verification config/i.test(warning)));
+  writeFileSync(join(first.worktreePath!, ".agent-bridge", "verify.json"), "{nope");
+  const invalid = manager.reviewPacket(first.taskId);
+  assert.ok(invalid.warnings.some((warning) => /verification config/i.test(warning)));
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("posix quoted filename and executable mode and external symlink enter review", async () => {
+  if (process.platform === "win32") return;
+  const root = initRepo();
+  const { manager, first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
+  const quoted = join(first.worktreePath!, 'quote"file.ts');
+  writeFileSync(quoted, "quoted-secret\n");
+  writeFileSync(join(first.worktreePath!, "tool.sh"), "#!/bin/sh\necho hi\n");
+  chmodSync(join(first.worktreePath!, "tool.sh"), 0o755);
+  symlinkSync("../outside-a", join(first.worktreePath!, "extlink"));
+  const packet = manager.reviewPacket(first.taskId);
+  assert.match(packet.diff, /quoted-secret/);
+  assert.ok(packet.changedFiles.some((file) => file.path.includes('quote"file.ts')));
+  assert.match(packet.diff, /new file mode 100755/);
+  assert.match(packet.diff, /extlink/);
+  unlinkSync(join(first.worktreePath!, "extlink"));
+  symlinkSync("../outside-b", join(first.worktreePath!, "extlink"));
+  assert.throws(() => manager.approve(first.taskId, first.stateVersion), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "REVIEW_DRIFT");
+    return true;
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("gitlink changes are rejected", async () => {
+  const root = initRepo();
+  const { manager, first } = await replayEdit(root, { "src.ts": "export const v = 2;\n" });
+  const vendor = join(first.worktreePath!, "vendor");
+  mkdirSync(vendor);
+  git(vendor, ["init"]);
+  git(vendor, ["config", "user.name", "t"]);
+  git(vendor, ["config", "user.email", "t@t"]);
+  writeFileSync(join(vendor, "x.ts"), "nested\n");
+  git(vendor, ["add", "."]);
+  git(vendor, ["commit", "-m", "nested"]);
+  assert.throws(() => manager.reviewPacket(first.taskId), (error: unknown) => {
+    assert.ok(error instanceof BridgeError);
+    assert.equal(error.code, "GITLINK_NOT_SUPPORTED");
+    return true;
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+

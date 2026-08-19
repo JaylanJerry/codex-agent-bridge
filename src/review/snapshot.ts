@@ -1,33 +1,40 @@
-import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { parsePorcelainLine, type ChangedFile, type ChangeSet } from "../workspace/changes.ts";
-import { safeJoinWorktree } from "../workspace/safe-path.ts";
-import type { VerificationPlan, VerifyResult } from "../verification/runner.ts";
+import type { ChangedFile, ChangeSet } from "../workspace/changes.ts";
+import { BridgeError, ErrorCodes } from "../core/errors.ts";
+import { parseVerificationPlan, type VerificationPlan, type VerifyResult } from "../verification/runner.ts";
 
 export type ReviewFile = ChangedFile & {
   mode?: string;
-  symlinkTarget?: string;
-  contentHash?: string;
 };
 
 export type ReviewSnapshot = {
   baseCommit: string;
   head: string;
+  resultTreeOid: string;
+  canonicalDiffHash: string;
   files: ReviewFile[];
   diff: string;
+  verifyIds: string[];
   verificationPlan: VerificationPlan | null;
   verificationResult: { passed: boolean; skipped: boolean; outputHash: string } | null;
   verifyConfigDrift: boolean;
 };
 
-function git(cwd: string, args: string[]): { status: number; stdout: string; stderr: string } {
+function git(
+  cwd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): { status: number; stdout: string; stderr: string } {
   const proc = spawnSync("git", ["-c", "core.longpaths=true", "-c", "core.quotepath=false", ...args], {
     cwd,
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: 32 * 1024 * 1024,
+    env: env ? { ...process.env, ...env } : process.env,
   });
   return {
     status: proc.status ?? 1,
@@ -40,7 +47,7 @@ function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-function canonicalize(value: unknown): unknown {
+export function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
     return Object.fromEntries(
@@ -56,131 +63,117 @@ export function reviewDigest(snapshot: ReviewSnapshot): string {
   const payload = {
     baseCommit: snapshot.baseCommit,
     head: snapshot.head,
-    files: snapshot.files.map((file) => ({
-      path: file.path.replaceAll("\\", "/"),
-      change: file.change,
-      oldPath: file.oldPath?.replaceAll("\\", "/") ?? "",
-      mode: file.mode ?? "",
-      symlinkTarget: file.symlinkTarget ?? "",
-      contentHash: file.contentHash ?? "",
-      tracked: file.tracked,
-    })),
+    resultTreeOid: snapshot.resultTreeOid,
+    canonicalDiffHash: snapshot.canonicalDiffHash,
+    verifyIds: [...snapshot.verifyIds].sort(),
     verificationPlan: snapshot.verificationPlan,
     verificationResult: snapshot.verificationResult,
   };
   return sha256(JSON.stringify(canonicalize(payload)));
 }
 
-function gitMode(cwd: string, relativePath: string, change: ChangedFile["change"]): string | undefined {
-  if (change === "deleted") {
-    const staged = git(cwd, ["ls-tree", "-r", "--full-name", "HEAD", "--", relativePath]);
-    const match = staged.stdout.match(/^(\d{6})\s/);
-    if (match) return match[1];
-    return undefined;
-  }
+export function writeWorktreeResultTree(cwd: string): string {
+  const indexPath = join(tmpdir(), `ab-review-${randomUUID()}.index`);
+  const env = { GIT_INDEX_FILE: indexPath };
   try {
-    const abs = safeJoinWorktree(cwd, relativePath);
-    if (!existsSync(abs)) return undefined;
-    const stat = lstatSync(abs);
-    if (stat.isSymbolicLink()) return "120000";
-    if ((stat.mode & 0o111) !== 0) return "100755";
-    return "100644";
-  } catch {
-    return undefined;
+    const read = git(cwd, ["read-tree", "HEAD"], env);
+    if (read.status !== 0) throw new Error(read.stderr || "git read-tree HEAD failed");
+    const add = git(cwd, ["add", "-A"], env);
+    if (add.status !== 0) throw new Error(add.stderr || "git add -A failed");
+    const written = git(cwd, ["write-tree"], env);
+    if (written.status !== 0) throw new Error(written.stderr || "git write-tree failed");
+    return written.stdout.trim();
+  } finally {
+    rmSync(indexPath, { force: true });
+    rmSync(`${indexPath}.lock`, { force: true });
   }
 }
 
-function fileMeta(cwd: string, file: ChangedFile): ReviewFile {
-  const path = file.path.replaceAll("\\", "/");
-  const extra: ReviewFile = { ...file, path };
-  extra.mode = gitMode(cwd, path, file.change);
-  if (file.change === "deleted") return extra;
-  try {
-    const abs = safeJoinWorktree(cwd, path);
-    if (!existsSync(abs)) return extra;
-    const stat = lstatSync(abs);
-    if (stat.isSymbolicLink()) {
-      extra.symlinkTarget = readlinkSync(abs, "utf8");
-      extra.contentHash = sha256(extra.symlinkTarget);
-      return extra;
+export function parseDiffRawZ(raw: string): ReviewFile[] {
+  const parts = raw.split("\0");
+  const files: ReviewFile[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const meta = parts[i];
+    if (!meta) {
+      i += 1;
+      continue;
     }
-    if (stat.isFile()) extra.contentHash = sha256(readFileSync(abs));
-  } catch {
-    // PATH_ESCAPE or vanished file: omit content; digest still binds path/change
+    const match = meta.match(/^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z](?:\d+)?)$/);
+    if (!match) {
+      i += 1;
+      continue;
+    }
+    const [, srcMode, dstMode, , , status] = match;
+    if (srcMode === "160000" || dstMode === "160000") {
+      throw new BridgeError(ErrorCodes.GITLINK_NOT_SUPPORTED, "submodule/gitlink changes are not supported");
+    }
+    if (status.startsWith("R") || status.startsWith("C")) {
+      const oldPath = parts[i + 1];
+      const newPath = parts[i + 2];
+      if (!oldPath || !newPath) throw new Error("truncated rename in git diff --raw -z");
+      files.push({
+        path: newPath.replaceAll("\\", "/"),
+        oldPath: oldPath.replaceAll("\\", "/"),
+        change: "renamed",
+        tracked: true,
+        mode: dstMode,
+      });
+      i += 3;
+      continue;
+    }
+    const path = parts[i + 1];
+    if (!path) throw new Error("truncated path in git diff --raw -z");
+    const change: ReviewFile["change"] = status.startsWith("A")
+      ? "added"
+      : status.startsWith("D")
+        ? "deleted"
+        : "modified";
+    files.push({
+      path: path.replaceAll("\\", "/"),
+      change,
+      tracked: true,
+      mode: change === "deleted" ? srcMode : dstMode,
+    });
+    i += 2;
   }
-  return extra;
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return files;
 }
 
-function newFilePatch(cwd: string, relativePath: string): string {
-  try {
-    const abs = safeJoinWorktree(cwd, relativePath);
-    if (!existsSync(abs)) return "";
-    const stat = lstatSync(abs);
-    if (stat.isSymbolicLink()) {
-      const target = readlinkSync(abs, "utf8");
-      return `diff --git a/${relativePath} b/${relativePath}\nnew file mode 120000\n--- /dev/null\n+++ b/${relativePath}\n@@ -0,0 +1 @@\n+${target}\n`;
-    }
-    const raw = readFileSync(abs);
-    if (raw.includes(0)) {
-      return `diff --git a/${relativePath} b/${relativePath}\nnew file mode 100644\nBinary files /dev/null and b/${relativePath} differ\n`;
-    }
-    const text = raw.toString("utf8");
-    const lines = text.split("\n");
-    const body = lines.map((line) => `+${line}`).join("\n");
-    const plus = lines.length;
-    return `diff --git a/${relativePath} b/${relativePath}\nnew file mode 100644\n--- /dev/null\n+++ b/${relativePath}\n@@ -0,0 +${plus} @@\n${body}${text.endsWith("\n") ? "" : "\n\\ No newline at end of file\n"}`;
-  } catch {
-    return "";
-  }
-}
-
-function trackedDiff(cwd: string, baseCommit: string): string {
-  const proc = git(cwd, ["diff", "--no-color", "--binary", baseCommit]);
-  if (proc.status !== 0) return (proc.stdout || proc.stderr || "").replace(/(?:\r?\n)+$/, "");
-  return proc.stdout.replace(/(?:\r?\n)+$/, "");
-}
-
-function worktreeVerifyHash(cwd: string): string | null {
+function detectVerifyConfigDrift(cwd: string, plan: VerificationPlan | null): boolean {
   const path = join(cwd, ".agent-bridge", "verify.json");
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) return plan !== null;
   try {
-    return sha256(readFileSync(path));
+    const parsed = parseVerificationPlan(readFileSync(path, "utf8"));
+    return JSON.stringify(canonicalize(parsed)) !== JSON.stringify(canonicalize(plan));
   } catch {
-    return null;
+    return true;
   }
 }
 
 export function buildReviewSnapshot(opts: {
   cwd: string;
   baseCommit: string;
+  verifyIds?: string[];
   verificationPlan?: VerificationPlan | null;
   verificationResult?: VerifyResult | null;
 }): ReviewSnapshot {
   const headProc = git(opts.cwd, ["rev-parse", "HEAD"]);
   if (headProc.status !== 0) throw new Error(headProc.stderr || "rev-parse HEAD failed");
   const head = headProc.stdout.trim();
-  const porcelain = git(opts.cwd, ["status", "--porcelain=v1", "-uall"]);
-  const files: ReviewFile[] = [];
-  for (const line of porcelain.stdout.split(/\r?\n/)) {
-    const parsed = parsePorcelainLine(line);
-    if (parsed) files.push(fileMeta(opts.cwd, parsed));
-  }
-  files.sort((a, b) => a.path.localeCompare(b.path));
+  const resultTreeOid = writeWorktreeResultTree(opts.cwd);
 
-  const parts = [trackedDiff(opts.cwd, opts.baseCommit)];
-  for (const file of files) {
-    if (file.change === "added" && !file.tracked) {
-      const patch = newFilePatch(opts.cwd, file.path);
-      if (patch) parts.push(patch);
-    }
-  }
-  const diff = parts.filter(Boolean).join("\n");
+  const raw = git(opts.cwd, ["diff-tree", "-r", "--raw", "-z", "--no-commit-id", opts.baseCommit, resultTreeOid]);
+  if (raw.status !== 0) throw new Error(raw.stderr || "git diff-tree --raw failed");
+  const files = parseDiffRawZ(raw.stdout);
+
+  const diffProc = git(opts.cwd, ["diff", "--binary", "--no-color", opts.baseCommit, resultTreeOid]);
+  if (diffProc.status !== 0) throw new Error(diffProc.stderr || "git diff --binary failed");
+  const diff = diffProc.stdout.replace(/(?:\r?\n)+$/, "");
 
   const plan = opts.verificationPlan ?? null;
-  const planHash = plan ? sha256(JSON.stringify(canonicalize(plan))) : null;
-  const worktreeHash = worktreeVerifyHash(opts.cwd);
-  const verifyConfigDrift = Boolean(planHash && worktreeHash && planHash !== worktreeHash);
-
+  const verifyIds = opts.verifyIds ?? [];
   const verificationResult = opts.verificationResult
     ? {
         passed: opts.verificationResult.passed,
@@ -192,11 +185,14 @@ export function buildReviewSnapshot(opts: {
   return {
     baseCommit: opts.baseCommit,
     head,
+    resultTreeOid,
+    canonicalDiffHash: sha256(diff),
     files,
     diff,
+    verifyIds,
     verificationPlan: plan,
     verificationResult,
-    verifyConfigDrift,
+    verifyConfigDrift: detectVerifyConfigDrift(opts.cwd, plan),
   };
 }
 

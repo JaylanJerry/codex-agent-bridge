@@ -27,9 +27,9 @@ const tools = [
         objective: { type: "string" },
         worker: { type: "string", description: "claude | deepseek. replay/fake only in test/dev." },
         clientRequestId: { type: "string" },
-        inPlace: { type: "boolean" },
+        inPlace: { type: "boolean", description: "Forbidden in production. Dev/test only." },
         verifyIds: { type: "array", items: { type: "string" } },
-        files: { type: "object", additionalProperties: { type: "string" } },
+        files: { type: "object", additionalProperties: { type: "string" }, description: "Dev/test replay only." },
         timeoutMs: {
           type: "number",
           description:
@@ -109,7 +109,7 @@ const tools = [
         task: { type: "string" },
         notes: { type: "string" },
         stateVersion: { type: "number" },
-        files: { type: "object", additionalProperties: { type: "string" } },
+        files: { type: "object", additionalProperties: { type: "string" }, description: "Dev/test replay only." },
         worker: { type: "string" },
         timeoutMs: { type: "number" },
         permissionMode: { type: "string", enum: ["auto", "gate"] },

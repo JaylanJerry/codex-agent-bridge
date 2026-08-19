@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,7 @@ function initRepo(): string {
   writeFileSync(join(root, "src.ts"), "export const v = 1;\n");
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "init"]);
+  mkdirSync(join(root, ".agent-bridge-data"), { recursive: true });
   return root;
 }
 
@@ -39,7 +40,7 @@ async function approvedTask(root: string) {
   const manager = new TaskManager(
     new Map([["replay", new ReplayRuntimeDriver([{ stopReason: "end_turn", files: { "src.ts": "export const v = 2;\n" } }])]]),
     new Map([["replay", replayProfile]]),
-    new Journal(join(root, "journal.ndjson")),
+    new Journal(join(root, ".agent-bridge-data", "journal.ndjson")),
   );
   const created = manager.run({
     schemaVersion: "1.2",

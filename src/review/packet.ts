@@ -5,7 +5,8 @@ export type ReviewPacket = {
   objective: string;
   acceptanceCriteria: { id: string; text: string }[];
   workerStopReason?: string;
-  verification?: { passed: boolean; output?: string };
+  verification?: { passed: boolean; output?: string; verifyIds?: string[] };
+  verifyIds: string[];
   diffstat: { files: number; added: number; deleted: number; renamed: number };
   changedFiles: { path: string; change: string }[];
   warnings: string[];
@@ -33,11 +34,14 @@ export function buildReviewPacket(input: {
   if (input.snapshot.verifyConfigDrift) {
     warnings.push("Worker modified verification config; Bridge will not use the worktree copy");
   }
+  const verifyIds = input.snapshot.verifyIds;
   return {
     objective: input.objective,
     acceptanceCriteria: input.acceptanceCriteria ?? [],
     workerStopReason: input.workerStopReason,
-    verification: input.verification,
+    verification: input.verification
+      ? { ...input.verification, verifyIds }
+      : undefined,
     diffstat: {
       files: files.length,
       added: files.filter((file) => file.change === "added").length,
@@ -45,6 +49,7 @@ export function buildReviewPacket(input: {
       renamed: files.filter((file) => file.change === "renamed").length,
     },
     changedFiles: files.map((file) => ({ path: file.path, change: file.change })),
+    verifyIds,
     warnings,
     digest: input.digest,
     diff: input.snapshot.diff,

@@ -31,8 +31,32 @@ export function assertCallableWorker(
   if (!isProductionWorker(worker) && !isDebugWorker(worker)) {
     throw new BridgeError(ErrorCodes.WORKER_NOT_ALLOWED, `unknown worker ${worker}`);
   }
-  if (files && Object.keys(files).length > 0 && !debug) {
-    throw new BridgeError(ErrorCodes.WORKER_NOT_ALLOWED, "files is only available in test/dev");
-  }
+  assertFilesAllowed(worker, files, debug);
   return worker;
+}
+
+export function assertExecutableWorker(workerId: string, debug = debugWorkersAllowed()): void {
+  if (isDebugWorker(workerId) && !debug) {
+    throw new BridgeError(ErrorCodes.WORKER_NOT_ALLOWED, `${workerId} is only available in test/dev`);
+  }
+}
+
+export function assertFilesAllowed(
+  workerId: string,
+  files?: Record<string, string>,
+  debug = debugWorkersAllowed(),
+): void {
+  if (!files || Object.keys(files).length === 0) return;
+  if (!debug || !isDebugWorker(workerId)) {
+    throw new BridgeError(
+      ErrorCodes.WORKER_NOT_ALLOWED,
+      "files is only available for debug workers in test/dev",
+    );
+  }
+}
+
+export function assertInPlaceAllowed(inPlace: boolean | undefined, debug = debugWorkersAllowed()): void {
+  if (inPlace && !debug) {
+    throw new BridgeError(ErrorCodes.IN_PLACE_NOT_ALLOWED, "inPlace is only available in test/dev");
+  }
 }

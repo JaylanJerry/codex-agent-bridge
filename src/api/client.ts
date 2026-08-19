@@ -10,7 +10,13 @@ import { AcpRuntimeDriver } from "../runtime/acp/driver.ts";
 import { TaskManager, StateVersionConflictError, TaskAlreadyExistsError } from "../core/task-manager.ts";
 import { BridgeError } from "../core/errors.ts";
 import { PathEscapeError } from "../workspace/safe-path.ts";
-import { debugWorkersAllowed, assertCallableWorker } from "../workers/debug.ts";
+import {
+  debugWorkersAllowed,
+  assertCallableWorker,
+  assertExecutableWorker,
+  assertFilesAllowed,
+  assertInPlaceAllowed,
+} from "../workers/debug.ts";
 import { listAgents, runDoctor, type AgentInfo, type DoctorCheck } from "../core/doctor.ts";
 import {
   claudeProfile,
@@ -118,9 +124,12 @@ function ensureWorker(slot: CoreSlot, workerId: string): void {
     if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
     slot.profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
   }
-  if (workerId === "fake" && !slot.profiles.has("fake")) {
-    if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
-    slot.profiles.set("fake", fakeAcpProfile(repoRoot));
+  if (workerId === "fake") {
+    if (!debugWorkersAllowed()) return;
+    if (!slot.profiles.has("fake")) {
+      if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
+      slot.profiles.set("fake", fakeAcpProfile(repoRoot));
+    }
   }
 }
 
@@ -156,7 +165,7 @@ function getCore(
       drivers.set("replay", new ReplayRuntimeDriver(replayTurn ? [replayTurn] : []));
       profiles.set("replay", replayProfile);
     }
-    if ([...workerIds].some((id) => id === "claude" || id === "deepseek" || id === "fake")) {
+    if ([...workerIds].some((id) => id === "claude" || id === "deepseek" || (id === "fake" && debugWorkersAllowed()))) {
       drivers.set("acp", new AcpRuntimeDriver());
     }
     if (workerIds.has("claude")) {
@@ -165,7 +174,7 @@ function getCore(
     if (workerIds.has("deepseek")) {
       profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
     }
-    if (workerIds.has("fake")) {
+    if (debugWorkersAllowed() && workerIds.has("fake")) {
       profiles.set("fake", fakeAcpProfile(repoRoot));
     }
     const manager = new TaskManager(drivers, profiles, new Journal(join(dir, "journal.ndjson")));
@@ -229,6 +238,7 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
     };
 
     if (request.command === "run") {
+      assertInPlaceAllowed(request.inPlace);
       const input: BridgeTaskInput = {
         schemaVersion: "1.2",
         clientRequestId: request.clientRequestId ?? `req-${Date.now()}`,
@@ -267,8 +277,12 @@ export async function dispatch(request: BridgeRequest): Promise<BridgeResult> {
       return { ok: true, task: updated };
     }
     if (request.command === "continue") {
+      const taskId = required(request.task, "task");
+      const current = manager.get(taskId);
+      assertExecutableWorker(current.workerId);
+      assertFilesAllowed(current.workerId, request.files);
       const updated = manager.continue(
-        required(request.task, "task"),
+        taskId,
         required(request.notes, "notes"),
         Number(request.stateVersion),
       );

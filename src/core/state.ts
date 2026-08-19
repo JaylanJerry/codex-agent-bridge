@@ -42,6 +42,7 @@ export type TaskRecord = {
   lastStopReason?: string;
   lastVerification?: { passed: boolean; output: string; skipped: boolean };
   reviewDigest?: string;
+  reviewTreeOid?: string;
   targetBranch?: string;
   expectedTargetHead?: string;
   verificationPlan?: {

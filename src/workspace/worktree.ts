@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BridgeError, ErrorCodes } from "../core/errors.ts";
 
@@ -56,6 +56,27 @@ export function checkpointCommit(worktreePath: string, message: string): string 
   return git(worktreePath, ["rev-parse", "HEAD"]);
 }
 
+export function checkpointFromTree(worktreePath: string, treeOid: string, message: string): string {
+  const abs = resolve(worktreePath);
+  const head = git(abs, ["rev-parse", "HEAD"]);
+  const headTree = git(abs, ["rev-parse", "HEAD^{tree}"]);
+  if (headTree === treeOid) return head;
+  const commit = git(abs, [
+    "-c",
+    "user.name=agent-bridge",
+    "-c",
+    "user.email=agent-bridge@localhost",
+    "commit-tree",
+    treeOid,
+    "-p",
+    "HEAD",
+    "-m",
+    message,
+  ]);
+  git(abs, ["update-ref", "HEAD", commit]);
+  return commit;
+}
+
 export function cherryPickToRepo(repoPath: string, commit: string): string {
   const abs = resolve(repoPath);
   const proc = spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", commit], {
@@ -65,11 +86,14 @@ export function cherryPickToRepo(repoPath: string, commit: string): string {
   });
   if (proc.status !== 0) {
     const detail = `${proc.stderr || proc.stdout}`;
-    spawnSync("git", ["-c", "core.longpaths=true", "cherry-pick", "--abort"], {
-      cwd: abs,
-      encoding: "utf8",
-      windowsHide: true,
-    });
+    const op = inspectGitOperation(abs);
+    if (op === "cherry-pick" || op === "sequencer") {
+      const cherryHeadPath = join(gitDir(abs), "CHERRY_PICK_HEAD");
+      const cherryHead = existsSync(cherryHeadPath) ? readFileSync(cherryHeadPath, "utf8").trim() : "";
+      if (!cherryHead || cherryHead === commit || commit.startsWith(cherryHead) || cherryHead.startsWith(commit)) {
+        abortCherryPick(abs);
+      }
+    }
     if (/now empty|previous cherry-pick is now empty|already applied/i.test(detail)) {
       return git(abs, ["rev-parse", "HEAD"]);
     }
@@ -145,9 +169,7 @@ function isBridgeOwnedPath(path: string): boolean {
     normalized === ".agent-bridge-data" ||
     normalized.startsWith(".agent-bridge-data/") ||
     normalized === "agent-bridge" ||
-    normalized.startsWith("agent-bridge/") ||
-    // Tests write journals at repo root; production journals live under .agent-bridge-data.
-    normalized === "journal.ndjson"
+    normalized.startsWith("agent-bridge/")
   );
 }
 
