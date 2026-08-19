@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { packageRoot as repoRoot } from "../paths.ts";
 import { Journal } from "../persistence/journal.ts";
 import { redact } from "../persistence/redact.ts";
 import { FileTaskStore, TaskStoreCorruptedError } from "../persistence/store.ts";
+import { ensureRepoDataDir, repoId } from "../persistence/layout.ts";
 import { acquireCoreLock, CoreLockHeldError, type CoreLockHandle } from "../persistence/lock.ts";
 import { ReplayRuntimeDriver, type ReplayTurn } from "../runtime/replay/driver.ts";
 import { AcpRuntimeDriver } from "../runtime/acp/driver.ts";
@@ -77,9 +78,15 @@ function required(value: string | undefined, name: string): string {
 }
 
 function dataDirFor(projectPath: string): string {
-  const dir = join(projectPath, ".agent-bridge-data");
-  mkdirSync(dir, { recursive: true });
-  return dir;
+  return ensureRepoDataDir(projectPath);
+}
+
+function coreKey(projectPath: string): string {
+  try {
+    return repoId(projectPath);
+  } catch {
+    return resolve(projectPath).replaceAll("\\", "/").toLowerCase();
+  }
 }
 
 function fail(error: unknown): BridgeResult {
@@ -110,10 +117,6 @@ type CoreSlot = {
 };
 
 const cores = new Map<string, CoreSlot>();
-
-function coreKey(projectPath: string): string {
-  return resolve(projectPath).replaceAll("\\", "/").toLowerCase();
-}
 
 function ensureWorker(slot: CoreSlot, workerId: string): void {
   if (workerId === "claude" && !slot.profiles.has("claude")) {

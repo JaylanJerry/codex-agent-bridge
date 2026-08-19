@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,7 +33,12 @@ export function codexHome(): string {
 }
 
 export function bridgeHome(): string {
-  return resolve(process.env.AGENT_BRIDGE_HOME ?? join(homedir(), ".agent-bridge"));
+  if (process.env.AGENT_BRIDGE_HOME) return resolve(process.env.AGENT_BRIDGE_HOME);
+  if (process.env.NODE_TEST_CONTEXT) {
+    // Shared across the test process and MCP/CLI children so they see the same store.
+    return resolve(join(tmpdir(), "agent-bridge-tests"));
+  }
+  return resolve(join(homedir(), ".agent-bridge"));
 }
 
 export function installedPackageRoot(home = bridgeHome()): string {
