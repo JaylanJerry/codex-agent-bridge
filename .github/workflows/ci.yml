@@ -18,11 +18,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         node: [22, 24]
-    env:
-      # Git Bash on Windows rewrites TEMP to /tmp or /d/...; pin the runner temp so
-      # Node tmpdir() and git worktree paths stay on the same drive/path form.
-      TEMP: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
     defaults:
       run:
         shell: bash
