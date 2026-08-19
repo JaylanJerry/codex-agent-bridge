@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import type { WorkerProfile } from "../runtime/contract.ts";
 import { loadDeepseekApiKey } from "./credentials.ts";
+import { inheritedDeepSeekHome } from "./launch-policy.ts";
 
 export const replayProfile: WorkerProfile = {
   id: "replay",
@@ -115,6 +116,7 @@ export function resolveDeepSeekLaunch(packageRoot: string): WorkerProfile["launc
     env: {
       DEEPSEEK_API_KEY: loadDeepseekApiKey(),
       NODE_PATH: nodeModulePath(packageRoot),
+      DSH_HOME: inheritedDeepSeekHome(),
     },
   };
 }

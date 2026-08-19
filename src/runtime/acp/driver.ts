@@ -11,6 +11,7 @@ import type {
   WorkerProfile,
 } from "../contract.ts";
 import { autoSelectPermission } from "../contract.ts";
+import { mergeWorkerEnv } from "../worker-env.ts";
 import type { JobHandle } from "../../process/job-object.ts";
 
 export const DEFAULT_ACP_STARTUP_TIMEOUT_MS = 30_000;
@@ -104,7 +105,7 @@ export class AcpRuntimeDriver implements RuntimeDriver {
   ): Promise<RuntimeSession> {
     const child = spawn(profile.launch.command, profile.launch.args, {
       cwd: profile.launch.cwd ?? worktreePath,
-      env: { ...process.env, ...profile.launch.env },
+      env: mergeWorkerEnv(profile.launch.env),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       detached: false,

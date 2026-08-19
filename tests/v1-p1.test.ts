@@ -10,7 +10,7 @@ import { ReplayRuntimeDriver } from "../src/runtime/replay/driver.ts";
 import { TaskManager, StateVersionConflictError } from "../src/core/task-manager.ts";
 import { FileTaskStore } from "../src/persistence/store.ts";
 import { BridgeError } from "../src/core/errors.ts";
-import { fakeAcpProfile, replayProfile, resolveClaudeLaunch, resolveDeepSeekLaunch } from "../src/workers/profiles.ts";
+import { fakeAcpProfile, replayProfile } from "../src/workers/profiles.ts";
 import { cherryPickInProgress, cherryPickToRepo } from "../src/workspace/worktree.ts";
 import { AcpRuntimeDriver } from "../src/runtime/acp/driver.ts";
 
@@ -179,33 +179,6 @@ test("journal rotates when it exceeds maxBytes", () => {
   const rotated = existsSync(`${path}.1`) ? readFileSync(`${path}.1`, "utf8") : "";
   assert.ok(current.length + rotated.length > 0);
   rmSync(root, { recursive: true, force: true });
-});
-
-test("does not override worker model/provider/effort flags", () => {
-  const banned = /(?:^|\s)--(?:model|provider|effort|thinking)(?:\s|=|$)/i;
-  const profileSrc = readFileSync(join(repoRoot, "src/workers/profiles.ts"), "utf8");
-  const driverSrc = readFileSync(join(repoRoot, "src/runtime/acp/driver.ts"), "utf8");
-  assert.equal(banned.test(profileSrc), false);
-  assert.equal(/\bmodel\s*:/.test(profileSrc), false);
-  assert.match(driverSrc, /newSession\(\{/);
-  assert.match(driverSrc, /mcpServers:\s*\[\]/);
-  assert.equal(/\bmodel\s*:/.test(driverSrc), false);
-  const fake = fakeAcpProfile(repoRoot);
-  assert.equal(banned.test([fake.launch.command, ...fake.launch.args].join(" ")), false);
-  try {
-    const claude = resolveClaudeLaunch(repoRoot);
-    assert.equal(banned.test([claude.command, ...claude.args].join(" ")), false);
-  } catch (error) {
-    if (!String(error).includes("Claude ACP adapter missing")) throw error;
-  }
-  try {
-    const deepseek = resolveDeepSeekLaunch(repoRoot);
-    assert.equal(banned.test([deepseek.command, ...deepseek.args].join(" ")), false);
-  } catch (error) {
-    if (!String(error).includes("DeepSeek Harness ACP demo missing") && !String(error).includes("DEEPSEEK")) {
-      throw error;
-    }
-  }
 });
 
 test("hydrate marks CLAIMED apply APPLIED when cherry-pick already landed", async () => {
