@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BridgeError, ErrorCodes } from "../core/errors.ts";
 
@@ -36,13 +36,14 @@ export function createTaskWorktree(repoPath: string, taskId: string, startPoint?
 }
 
 export function removeTaskWorktree(handle: Pick<WorktreeHandle, "repoPath" | "worktreePath">): void {
+  const worktreePath = canonicalWorktreePath(handle.worktreePath);
   try {
-    git(handle.repoPath, ["worktree", "remove", "--force", handle.worktreePath]);
+    git(handle.repoPath, ["worktree", "remove", "--force", worktreePath]);
   } catch {
     // already detached
   }
-  if (existsSync(handle.worktreePath)) {
-    rmSync(handle.worktreePath, { recursive: true, force: true });
+  if (existsSync(worktreePath) || existsSync(handle.worktreePath)) {
+    rmSync(existsSync(worktreePath) ? worktreePath : handle.worktreePath, { recursive: true, force: true });
   }
 }
 
@@ -231,9 +232,45 @@ export function abortCherryPick(repoPath: string): void {
   });
 }
 
+export function canonicalWorktreePath(path: string): string {
+  let s = path.trim().replace(/^"(.*)"$/, "$1");
+  if (s.startsWith("\\\\?\\")) s = s.slice(4);
+  else if (s.startsWith("//?/")) s = s.slice(4);
+  if (process.platform === "win32") {
+    const cyg = /^\/cygdrive\/([a-zA-Z])(?:\/(.*))?$/.exec(s);
+    if (cyg) s = `${cyg[1]}:${cyg[2] ? `/${cyg[2]}` : "/"}`;
+    else {
+      const msys = /^\/([a-zA-Z])(?:\/(.*))?$/.exec(s);
+      if (msys) s = `${msys[1]}:${msys[2] ? `/${msys[2]}` : "/"}`;
+    }
+  }
+  const abs = resolve(s);
+  try {
+    return existsSync(abs) ? realpathSync(abs) : abs;
+  } catch {
+    return abs;
+  }
+}
+
 export function worktreeKey(path: string): string {
-  const normalized = resolve(path).replaceAll("\\", "/");
+  const normalized = canonicalWorktreePath(path).replaceAll("\\", "/").replace(/\/+$/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export function agentBridgeWorktreeId(path: string): string | undefined {
+  const match = /(?:^|\/)agent-bridge\/([^/]+)\/?$/i.exec(canonicalWorktreePath(path).replaceAll("\\", "/"));
+  return match?.[1];
+}
+
+export function isProtectedAgentBridgeWorktree(
+  path: string,
+  protectedKeys: Set<string>,
+  protectedTaskIds: Set<string>,
+): boolean {
+  if (protectedKeys.has(worktreeKey(path))) return true;
+  const id = agentBridgeWorktreeId(path);
+  if (!id) return false;
+  return protectedTaskIds.has(id) || protectedTaskIds.has(id.toLowerCase());
 }
 
 export function listAgentBridgeWorktrees(repoPath: string): string[] {
@@ -247,7 +284,7 @@ export function listAgentBridgeWorktrees(repoPath: string): string[] {
   for (const line of proc.stdout.split(/\r?\n/)) {
     if (!line.startsWith("worktree ")) continue;
     const path = line.slice("worktree ".length);
-    if (/[\\/]agent-bridge[\\/]/i.test(path)) paths.push(path);
+    if (/[\\/]agent-bridge[\\/]/i.test(path)) paths.push(canonicalWorktreePath(path));
   }
   return paths;
 }

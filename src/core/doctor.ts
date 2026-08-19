@@ -7,7 +7,7 @@ import { claudeAdapterPath, deepSeekHarnessRoot } from "../workers/profiles.ts";
 import { hasDeepseekApiKey } from "../workers/credentials.ts";
 import { createKillOnCloseJob } from "../process/job-object.ts";
 import { isTerminalState, type TaskRecord } from "./state.ts";
-import { listAgentBridgeWorktrees, worktreeKey } from "../workspace/worktree.ts";
+import { isProtectedAgentBridgeWorktree, listAgentBridgeWorktrees, worktreeKey } from "../workspace/worktree.ts";
 import { inspectCoreLock } from "../persistence/lock.ts";
 import { codexHome } from "../paths.ts";
 
@@ -126,12 +126,12 @@ function loadTaskStore(projectPath: string): { tasks: TaskRecord[]; corrupted?: 
 export function listOrphanWorktrees(projectPath: string): string[] {
   const store = loadTaskStore(projectPath);
   if (store.corrupted) return [];
-  const protectedKeys = new Set(
-    store.tasks
-      .filter((task) => !isTerminalState(task.state) && task.worktreePath)
-      .map((task) => worktreeKey(task.worktreePath!)),
+  const live = store.tasks.filter((task) => !isTerminalState(task.state) && task.worktreePath);
+  const protectedKeys = new Set(live.map((task) => worktreeKey(task.worktreePath!)));
+  const protectedTaskIds = new Set(live.flatMap((task) => [task.taskId, task.taskId.toLowerCase()]));
+  return listAgentBridgeWorktrees(projectPath).filter(
+    (path) => !isProtectedAgentBridgeWorktree(path, protectedKeys, protectedTaskIds),
   );
-  return listAgentBridgeWorktrees(projectPath).filter((path) => !protectedKeys.has(worktreeKey(path)));
 }
 
 export function listAgents(repoRoot: string): AgentInfo[] {

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm test
+      - name: Pack and install smoke
+        run: |
+          set -euo pipefail
+          tarball=$(npm pack --json | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{process.stdout.write(JSON.parse(s)[0].filename)})")
+          tmp=$(mktemp -d)
+          npm install --prefix "$tmp" "$PWD/$tarball"
+          test -f "$tmp/node_modules/codex-agent-bridge/bin/codex-agent-bridge.mjs"
+          test -f "$tmp/node_modules/codex-agent-bridge/src/mcp/server.ts"
+      - run: npm run mcp:smoke
