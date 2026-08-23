@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "private": false,
   "description": "Codex supervises Claude Code or DeepSeek Harness. The Bridge does not call an LLM.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "JaylanJerry",
   "homepage": "https://github.com/JaylanJerry/codex-agent-bridge#readme",
   "repository": {
@@ -23,7 +23,9 @@
     "skills",
     "templates",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "ROADMAP.md"
   ],
   "engines": {
     "node": ">=22"
