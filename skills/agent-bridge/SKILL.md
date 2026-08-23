@@ -38,7 +38,7 @@ bridge_run
 → 用户要落到当前分支时：bridge_apply（cherry-pick，不是 merge）
 ```
 
-`worker`：调试用 `replay`；闸门自检可用 `fake`；真干活用 `claude` 或 `deepseek`。V1 **只选 worker**。不要传、不要编造 `model` / `provider` / `effort`；用户已在 Claude Code 或 DeepSeek Harness 里按原生方式配好，Bridge 启动时继承。Claude 背后的官方 Anthropic、CC Switch 或其他第三方 Provider 是 Worker 内部实现，不要猜测 effective upstream model。
+`worker`：调试用 `replay`；闸门自检可用 `fake`；真干活用 `claude` 或 `deepseek`。V1 **只选 worker**。不要传、不要编造 `model` / `provider` / `effort`。Agent Bridge不管理DeepSeek model/provider/reasoning effort。DeepSeek effective route由运行中的Harness ACP composition决定。当前legacy integration使用上游composition配置。Claude Code 沿用其原生配置。Claude 背后的官方 Anthropic、CC Switch 或其他第三方 Provider 是 Worker 内部实现，不要猜测 effective upstream model。
 
 项目里如果有 `.agent-bridge/verify.json`，`bridge_run` 会默认跑其中全部 verifyId。也可显式传 `verifyIds`。示例：`templates/verify.json`。
 

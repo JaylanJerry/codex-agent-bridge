@@ -38,7 +38,7 @@ npm run mcp:smoke
 Skill 源文件：`skills/agent-bridge/SKILL.md`  
 用户级副本：`~/.codex/skills/agent-bridge/SKILL.md`
 
-V1 的 `bridge_run` **只选择 `worker`**（`claude` / `deepseek` / 调试 `replay` / `fake`）。Codex **不得虚构** `model` / `provider` / `effort` 参数；这些由用户在 Worker 原生配置里预先设好，Bridge 启动时继承。Claude 走官方 Anthropic、CC Switch 或其他第三方 Provider 是 Worker 内部实现，Bridge 不感知。
+V1 的 `bridge_run` **只选择 `worker`**（`claude` / `deepseek` / 调试 `replay` / `fake`）。Codex **不得虚构** `model` / `provider` / `effort` 参数。Agent Bridge不管理DeepSeek model/provider/reasoning effort。DeepSeek effective route由运行中的Harness ACP composition决定。当前legacy integration使用上游composition配置。Claude Code 沿用其原生配置。Claude 走官方 Anthropic、CC Switch 或其他第三方 Provider 是 Worker 内部实现，Bridge 不感知。
 
 安装前提：用户至少已有一个可独立正常运行、完成认证和配置的 Worker。Agent Bridge 负责检测，不负责配置 Worker 模型或第三方 Provider。
 
