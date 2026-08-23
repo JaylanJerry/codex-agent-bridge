@@ -1,9 +1,14 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import type { WorkerProfile } from "../runtime/contract.ts";
-import { loadDeepseekApiKey } from "./credentials.ts";
+
+export {
+  deepSeekHarnessCandidates,
+  deepSeekHarnessRoot,
+  isDeepSeekHarnessRoot,
+  resolveDeepSeekLaunch,
+} from "./deepseek-launch.ts";
 
 export const replayProfile: WorkerProfile = {
   id: "replay",
@@ -52,32 +57,6 @@ export const claudeProfile = (launch: WorkerProfile["launch"]): WorkerProfile =>
   launch,
 });
 
-export function isDeepSeekHarnessRoot(root: string): boolean {
-  return (
-    existsSync(join(root, "packages/examples/acp-demo/src/bin.ts")) &&
-    existsSync(join(root, "examples/acp-agent/cordis.yml"))
-  );
-}
-
-export function deepSeekHarnessCandidates(packageRoot: string): string[] {
-  const home = homedir();
-  const env = process.env.AGENT_BRIDGE_DEEPSEEK_ROOT?.trim();
-  return [
-    env,
-    join(packageRoot, "references/deepseek-harness"),
-    join(home, "deepseek-harness"),
-    join(home, ".dsh", "deepseek-harness"),
-    join(home, ".dsh"),
-  ].filter((item): item is string => Boolean(item));
-}
-
-export function deepSeekHarnessRoot(packageRoot: string): string | undefined {
-  for (const candidate of deepSeekHarnessCandidates(packageRoot)) {
-    if (isDeepSeekHarnessRoot(candidate)) return candidate;
-  }
-  return undefined;
-}
-
 export function claudeAdapterPath(packageRoot: string): string {
   try {
     const require = createRequire(join(packageRoot, "package.json"));
@@ -97,24 +76,4 @@ export function resolveClaudeLaunch(packageRoot: string): WorkerProfile["launch"
     throw new Error(`Claude ACP adapter missing: ${adapter}`);
   }
   return { command: process.execPath, args: [adapter] };
-}
-
-export function resolveDeepSeekLaunch(packageRoot: string): WorkerProfile["launch"] {
-  const harness = deepSeekHarnessRoot(packageRoot);
-  if (!harness) {
-    throw new Error(
-      "DeepSeek Harness ACP demo missing (set AGENT_BRIDGE_DEEPSEEK_ROOT or install DeepSeek Harness)",
-    );
-  }
-  const bin = join(harness, "packages/examples/acp-demo/src/bin.ts");
-  const config = join(harness, "examples/acp-agent/cordis.yml");
-  return {
-    command: process.execPath,
-    args: ["--import", "tsx", bin, "--config", config],
-    cwd: harness,
-    env: {
-      DEEPSEEK_API_KEY: loadDeepseekApiKey(),
-      NODE_PATH: nodeModulePath(packageRoot),
-    },
-  };
 }

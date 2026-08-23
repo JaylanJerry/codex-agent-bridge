@@ -1,10 +1,11 @@
 # Agent Bridge 产品指导（现行）
 
-**日期：** 2026-08-19（同日修订：npm 一条命令分发，见 ADR-003）  
-**效力：** 开发与发布以本文 + `docs/decisions/ADR-001-post-mvp-direction.md` + `docs/decisions/ADR-003-npm-distribution.md` 为准。  
+**日期：** 2026-08-23（修订：DeepSeek launch 事实与 ADR-004）  
+**效力：** 开发与发布以本文 + `docs/decisions/ADR-001-post-mvp-direction.md` + `docs/decisions/ADR-003-npm-distribution.md` + `docs/decisions/ADR-004-deepseek-official-automation-boundary.md` 为准。  
 **ADR-001：** **Accepted**（路线 B）。本修订不重开 A/B，不改阶段顺序。  
 **ADR-003：** **Accepted**。陌生人入口是 `npx -y codex-agent-bridge`，不是 clone，也不是 EXE。  
-**与旧文冲突时：** ADR-001、ADR-003 与本文 > V0.5 实现接口 > V0.4 愿望清单。`IMPLEMENTATION_ROADMAP.md` 只作历史。
+**ADR-004：** **Accepted architecture, Pending runtime-closure implementation**。DeepSeek 首选官方 ACP；`0.1.1-rc.2` 尚未形成可分发 runtime closure，production 仍走 legacy source ACP。  
+**与旧文冲突时：** ADR-001、ADR-003、ADR-004 与本文 > V0.5 实现接口 > V0.4 愿望清单。`IMPLEMENTATION_ROADMAP.md` 只作历史。
 
 仓库仍叫 Agent Relay，产品名是 **Agent Bridge**。npm 包名是 `codex-agent-bridge`。
 
@@ -44,7 +45,9 @@ Turn 结束不是任务完成。Worker 不得 commit / push / merge / rebase。D
 | 干净机器陌生用户验收 | **已通过（2026-08-19 作者机 Windows；独立测试仓；未改 Bridge 源码）** |
 | HTTP daemon / SQLite / GUI / 单文件 EXE | **推迟（ADR-002）** |
 | OpenCode 及其他 Agent | **后接 Profile** |
-| Worker model / provider / effort 管理 | **不做（V1 只选 Worker，继承用户原生配置）** |
+| Worker model / provider / effort 管理 | **不做（V1 只选 Worker）。Claude 沿用原生配置；DeepSeek legacy 路径遵循上游 ACP composition，不是自动继承当前持久选择** |
+| DeepSeek transport | **standard ACP**（复用 `AcpRuntimeDriver`） |
+| DeepSeek launch | **legacy source/example coupling**，待迁官方 Product runtime closure（ADR-004 / No-Go） |
 
 自动化：`npm test`。MCP 注册见 `docs/CODEX_SKILL.md`。Skill：`skills/agent-bridge/SKILL.md`。
 
@@ -71,7 +74,7 @@ V1 **只选择 Worker**（`claude` / `deepseek` / 调试用 `replay` / `fake`）
 - reasoning effort
 - model routing
 
-Claude Code 与 DeepSeek Harness 由用户按各自原生方式提前配置并完成认证。Bridge 启动 Worker 时继承其**当前持久配置**。
+Claude Code 与 DeepSeek Harness 由用户按各自原生方式提前配置并完成认证。Agent Bridge 不向任务接口暴露 model / provider / reasoning effort，也不会由 Codex 按 Task 选择这些参数。Claude Code 沿用其原生配置。DeepSeek 的 effective route 由所启动的 Harness ACP composition 决定；在官方 runtime 迁移完成前，legacy source 路径仍遵循上游 ACP composition 的配置，**不是**自动继承用户在 Web/TUI picker 中的当前持久选择。
 
 Claude 背后走官方 Anthropic、CC Switch 或其他第三方 Provider，一律视为 **Worker 内部实现**。Bridge 不感知、不修改、不得猜测 effective upstream model。
 
@@ -106,7 +109,7 @@ Claude 背后走官方 Anthropic、CC Switch 或其他第三方 Provider，一�
 6. journal retention；`prune` 已有，补日志轮转策略。
 7. 安装说明或脚本 / README 完成标准：Node、MCP 写入 `config.toml`（`command` 用 `node.exe` + tsx，不要用 `npx.cmd` / `tsx.cmd`）、拷 Skill、凭证「有/无」检测、doctor 补 Skill/锁、卸载说明。前提：用户**至少已有一个**可独立正常运行、完成认证和配置的 Worker。Agent Bridge 负责检测，**不负责**配置 Worker 模型或第三方 Provider。陌生人入口：`npx -y codex-agent-bridge`（落到 `~/.agent-bridge`，不 clone 仓库）。
 8. **最终验收：** 干净 Windows、不改 Bridge 源码、Claude `run → permission → verify → approve → apply`。
-9. **Worker Configuration Inheritance Test：** 分别验证 Claude Code 与 DeepSeek Harness 经 Bridge **新启动**的 Session 确实继承用户已有持久 model / effort 配置。某 Worker 不继承时，只做该 Worker 的最小兼容，不建立统一模型管理系统。
+9. **Worker Configuration Inheritance Test：** Claude Code 验证经 Bridge **新启动**的 Session 沿用其原生持久配置。DeepSeek 在官方 runtime 迁移完成前，只验证 legacy ACP composition 的 route 来源可解释，并且 Bridge 不传入 / 不猜 model / provider / effort。不建立统一模型管理系统，不解析 `settings.yaml`。
 
 ### 阶段 V1.x — 用起来再补
 
@@ -141,6 +144,7 @@ HTTP daemon、SQLite、WebView2、单文件 EXE。
 | 目的 | 读 |
 |---|---|
 | 下一步做什么 | **本文** |
+| DeepSeek launch / 官方 ACP 边界 | `docs/decisions/ADR-004-deepseek-official-automation-boundary.md`、`docs/research/deepseek-acp-runtime-spike.md` |
 | 为何不走 HTTP/SQLite | `docs/decisions/ADR-001-post-mvp-direction.md` |
 | 锁 / JSON / FINALIZING 证据 | `docs/decisions/ADR-001-appendix-route-b-evidence.md` |
 | 已实现接口与状态机 | `docs/Agent_Bridge_Technical_Design_V0.5.md` + `src/` |

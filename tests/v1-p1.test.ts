@@ -184,9 +184,12 @@ test("journal rotates when it exceeds maxBytes", () => {
 test("does not override worker model/provider/effort flags", () => {
   const banned = /(?:^|\s)--(?:model|provider|effort|thinking)(?:\s|=|$)/i;
   const profileSrc = readFileSync(join(repoRoot, "src/workers/profiles.ts"), "utf8");
+  const launchSrc = readFileSync(join(repoRoot, "src/workers/deepseek-launch.ts"), "utf8");
   const driverSrc = readFileSync(join(repoRoot, "src/runtime/acp/driver.ts"), "utf8");
   assert.equal(banned.test(profileSrc), false);
+  assert.equal(banned.test(launchSrc), false);
   assert.equal(/\bmodel\s*:/.test(profileSrc), false);
+  assert.equal(/\bmodel\s*:/.test(launchSrc), false);
   assert.match(driverSrc, /newSession\(\{/);
   assert.match(driverSrc, /mcpServers:\s*\[\]/);
   assert.equal(/\bmodel\s*:/.test(driverSrc), false);

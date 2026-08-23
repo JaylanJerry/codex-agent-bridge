@@ -3,8 +3,8 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { claudeAdapterPath, deepSeekHarnessRoot } from "../workers/profiles.ts";
-import { hasDeepseekApiKey } from "../workers/credentials.ts";
+import { claudeAdapterPath } from "../workers/profiles.ts";
+import { inspectDeepSeekLaunch } from "../workers/deepseek-launch.ts";
 import { createKillOnCloseJob } from "../process/job-object.ts";
 import { isTerminalState, type TaskRecord } from "./state.ts";
 import { isProtectedAgentBridgeWorktree, listAgentBridgeWorktrees, worktreeKey } from "../workspace/worktree.ts";
@@ -138,9 +138,18 @@ export function listOrphanWorktrees(projectPath: string): string[] {
 export function listAgents(repoRoot: string): AgentInfo[] {
   const claudePath = claudeAdapterPath(repoRoot);
   const claudeOk = existsSync(claudePath);
-  const harness = deepSeekHarnessRoot(repoRoot);
-  const deepseekOk = Boolean(harness);
-  const deepseekKey = hasDeepseekApiKey();
+  const deepseek = inspectDeepSeekLaunch(repoRoot);
+  const deepseekOk = deepseek.integration !== "missing";
+  const deepseekKey = deepseek.credentials === "present";
+  const homeBit = deepseek.homePresent ? `DSH_HOME present (${deepseek.home})` : "DSH_HOME missing";
+  const deepseekDetail =
+    deepseek.integration === "official"
+      ? `transport=acp; integration=official; runtime=${deepseek.runtimeVersion ?? deepseek.runtimePath ?? "resolved"}; credentials=${deepseek.credentials}; ${homeBit}`
+      : deepseek.integration === "legacy"
+        ? deepseekKey
+          ? `DeepSeek Harness: available (legacy source ACP); transport=acp; integration=legacy; path=${deepseek.runtimePath}; credentials=${deepseek.credentials}; ${homeBit}`
+          : `DeepSeek Harness: available (legacy source ACP); transport=acp; integration=legacy; path=${deepseek.runtimePath}; credentials=missing; ${homeBit}`
+        : `DeepSeek Harness: missing (legacy source ACP). Official ACP runtime/profile is not a supported production launch yet. set AGENT_BRIDGE_DEEPSEEK_ROOT; Bridge does not install DeepSeek Harness; credentials=${deepseek.credentials}; ${homeBit}`;
   return [
     {
       id: "replay",
@@ -168,11 +177,7 @@ export function listAgents(repoRoot: string): AgentInfo[] {
       available: deepseekOk && deepseekKey,
       runtime: "acp",
       loadSession: false,
-      detail: !deepseekOk
-        ? "harness not found (set AGENT_BRIDGE_DEEPSEEK_ROOT; Bridge does not install DeepSeek Harness)"
-        : deepseekKey
-          ? `harness present at ${harness}; API key present`
-          : `harness present at ${harness}; DEEPSEEK_API_KEY missing`,
+      detail: deepseekDetail,
     },
   ];
 }
