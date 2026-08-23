@@ -3,7 +3,38 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import type { WorkerProfile } from "../runtime/contract.ts";
-import { loadDeepseekApiKey } from "./credentials.ts";
+import { hasDeepseekApiKey, loadDeepseekApiKey } from "./credentials.ts";
+
+export type DeepSeekIntegration = "official" | "legacy" | "missing";
+
+export type DeepSeekOfficialRuntime = {
+  command: string;
+  args: string[];
+  version?: string;
+  path?: string;
+};
+
+export type DeepSeekIntegrationReport = {
+  transport: "acp";
+  integration: DeepSeekIntegration;
+  runtimePath?: string;
+  home: string;
+  homePresent: boolean;
+  credentials: "present" | "missing";
+};
+
+/** Official DSH data root. Bridge may pass this through; it does not parse the files inside. */
+export function inheritedDeepSeekHome(): string {
+  return process.env.DSH_HOME?.trim() || join(homedir(), ".dsh");
+}
+
+/**
+ * Product-supported official ACP runtime, if one exists.
+ * Keep returning undefined until DeepSeek ships a spawnable closure. Do not fake ready.
+ */
+export function resolveOfficialDeepSeekAcpRuntime(): DeepSeekOfficialRuntime | undefined {
+  return undefined;
+}
 
 export const replayProfile: WorkerProfile = {
   id: "replay",
@@ -76,6 +107,40 @@ export function deepSeekHarnessRoot(packageRoot: string): string | undefined {
     if (isDeepSeekHarnessRoot(candidate)) return candidate;
   }
   return undefined;
+}
+
+export function inspectDeepSeekIntegration(packageRoot: string): DeepSeekIntegrationReport {
+  const official = resolveOfficialDeepSeekAcpRuntime();
+  const harness = deepSeekHarnessRoot(packageRoot);
+  const home = inheritedDeepSeekHome();
+  const credentials = hasDeepseekApiKey() ? "present" : "missing";
+  if (official) {
+    return {
+      transport: "acp",
+      integration: "official",
+      runtimePath: official.path,
+      home,
+      homePresent: existsSync(home),
+      credentials,
+    };
+  }
+  if (harness) {
+    return {
+      transport: "acp",
+      integration: "legacy",
+      runtimePath: harness,
+      home,
+      homePresent: existsSync(home),
+      credentials,
+    };
+  }
+  return {
+    transport: "acp",
+    integration: "missing",
+    home,
+    homePresent: existsSync(home),
+    credentials,
+  };
 }
 
 export function claudeAdapterPath(packageRoot: string): string {
