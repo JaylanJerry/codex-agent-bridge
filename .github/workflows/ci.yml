@@ -37,4 +37,6 @@ jobs:
           npm install --prefix "$tmp" "$PWD/$tarball"
           test -f "$tmp/node_modules/codex-agent-bridge/bin/codex-agent-bridge.mjs"
           test -f "$tmp/node_modules/codex-agent-bridge/src/mcp/server.ts"
+          CODEX_HOME="$tmp/codex-home" AGENT_BRIDGE_HOME="$tmp/bridge-home" \
+            node "$tmp/node_modules/codex-agent-bridge/bin/codex-agent-bridge.mjs" doctor
       - run: npm run mcp:smoke

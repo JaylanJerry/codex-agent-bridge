@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { runDoctor } from "../core/doctor.ts";
+import { formatDoctorReport, runDoctor } from "../core/doctor.ts";
 import {
   PACKAGE_NAME,
   bridgeHome,
@@ -152,13 +152,7 @@ export function runSetup(opts: SetupOptions = {}): string {
   );
   console.log("Reopen Codex after this setup so bridge_* tools load.");
 
-  const report = runDoctor({ repoRoot: root });
-  for (const check of report.checks) {
-    console.log(`${check.ok ? "ok" : "FAIL"}  ${check.id}: ${check.detail}`);
-  }
-  for (const agent of report.agents) {
-    console.log(`${agent.available ? "ok" : "no "}  worker ${agent.id}: ${agent.detail}`);
-  }
+  console.log(formatDoctorReport(runDoctor({ repoRoot: root })));
   return root;
 }
 

@@ -54,6 +54,8 @@ test("setup --dev writes Skill and MCP under CODEX_HOME without touching the rea
     env,
   });
   assert.equal(proc.status, 0, proc.stderr || proc.stdout);
+  assert.match(proc.stdout, /Agent Bridge installed/);
+  assert.equal(/Error:\s*undefined/.test(proc.stdout), false);
   const skill = join(root, "codex", "skills", "agent-bridge", "SKILL.md");
   const config = join(root, "codex", "config.toml");
   assert.equal(existsSync(skill), true);

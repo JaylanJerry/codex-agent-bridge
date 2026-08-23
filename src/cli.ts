@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { dispatch, type BridgeRequest } from "./api/client.ts";
+import { formatDoctorReport, runDoctor } from "./core/doctor.ts";
+import { packageRoot } from "./paths.ts";
 
 type FlagMap = {
   command: string;
@@ -78,6 +80,19 @@ if (isSetup) {
   process.exit(0);
 }
 
-const result = await dispatch(toRequest(parseArgv(rawArgv)));
+const flags = parseArgv(rawArgv);
+if (flags.command === "doctor" && flags.values.json !== "true") {
+  const project = flags.values.project;
+  const report = runDoctor({
+    repoRoot: packageRoot,
+    projectPath: project,
+  });
+  const text = formatDoctorReport(report);
+  console.log(text);
+  const fatal = report.checks.some((check) => !check.ok && check.id !== "codex-mcp" && check.id !== "codex-skill" && check.id !== "worker-ready");
+  process.exit(fatal ? 1 : 0);
+}
+
+const result = await dispatch(toRequest(flags));
 console.log(JSON.stringify(result, null, 2));
 process.exit(result.ok ? 0 : 1);
