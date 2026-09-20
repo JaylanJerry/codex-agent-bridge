@@ -25,7 +25,7 @@ import {
   fakeAcpProfile,
   replayProfile,
   resolveClaudeLaunch,
-  resolveDeepSeekLaunch,
+  requireDeepSeekWorkerLaunch,
 } from "../workers/profiles.ts";
 import type { PermissionMode, RuntimeDriver, WorkerProfile } from "../runtime/contract.ts";
 import type { BridgeTaskInput, TaskRecord } from "../core/state.ts";
@@ -125,7 +125,7 @@ function ensureWorker(slot: CoreSlot, workerId: string): void {
   }
   if (workerId === "deepseek" && !slot.profiles.has("deepseek")) {
     if (!slot.drivers.has("acp")) slot.drivers.set("acp", new AcpRuntimeDriver());
-    slot.profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
+    slot.profiles.set("deepseek", deepSeekProfile(requireDeepSeekWorkerLaunch(repoRoot)));
   }
   if (workerId === "fake") {
     if (!debugWorkersAllowed()) return;
@@ -175,7 +175,7 @@ function getCore(
       profiles.set("claude", claudeProfile(resolveClaudeLaunch(repoRoot)));
     }
     if (workerIds.has("deepseek")) {
-      profiles.set("deepseek", deepSeekProfile(resolveDeepSeekLaunch(repoRoot)));
+      profiles.set("deepseek", deepSeekProfile(requireDeepSeekWorkerLaunch(repoRoot)));
     }
     if (debugWorkersAllowed() && workerIds.has("fake")) {
       profiles.set("fake", fakeAcpProfile(repoRoot));
