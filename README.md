@@ -69,9 +69,9 @@ bridge_run
 
 Turn 结束 ≠ 任务完成。Diff 只认 `baseCommit` vs worktree。
 
-`bridge_run` **只选 worker**：`claude` 或 `deepseek`（调试可用 `replay` / `fake`）。不要传 `model` / `provider` / `effort`。
+`bridge_run` **只选 worker**：`claude` 或 `deepseek`（调试可用 `replay` / `fake`）。不要传 `model` / `provider` / `effort`。Agent Bridge不管理DeepSeek model/provider/reasoning effort。DeepSeek effective route由运行中的Harness ACP composition决定。当前legacy integration使用上游composition配置。Claude Code 沿用其原生配置。
 
-DeepSeek Harness 如果不在常见路径，设置 `AGENT_BRIDGE_DEEPSEEK_ROOT`。
+DeepSeek 当前仍是 **legacy source ACP**（依赖 Harness 源码树里的 example 入口）。如果不在常见路径，设置 `AGENT_BRIDGE_DEEPSEEK_ROOT`。这不是官方 Product runtime，也不应再扩张。
 
 ---
 
@@ -127,5 +127,6 @@ npm test
 | Codex 怎么接 | [docs/CODEX_SKILL.md](docs/CODEX_SKILL.md) |
 | 为什么走 npm、不走 EXE | [docs/decisions/ADR-003-npm-distribution.md](docs/decisions/ADR-003-npm-distribution.md) |
 | 为什么不做 HTTP/GUI | [docs/decisions/ADR-001-post-mvp-direction.md](docs/decisions/ADR-001-post-mvp-direction.md) |
+| DeepSeek 官方 automation 边界 | [docs/decisions/ADR-004-deepseek-official-automation-boundary.md](docs/decisions/ADR-004-deepseek-official-automation-boundary.md) |
 
 仓库目录可能仍叫 Agent Relay。产品名是 Agent Bridge。npm 包名是 `codex-agent-bridge`。
