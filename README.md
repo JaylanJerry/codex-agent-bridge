@@ -147,6 +147,12 @@ npm test
 
 `--dev` 让 MCP 指向当前仓库，而不是 `~/.agent-bridge`。
 
+## License
+
+Apache-2.0. See [LICENSE](./LICENSE).
+
+Roadmap: [ROADMAP.md](./ROADMAP.md). Changes: [CHANGELOG.md](./CHANGELOG.md).
+
 ## 发布新版本
 
 本地 `npm publish` 每次都会要 2FA。正确做法是：**改版本 → 打 tag → push**，GitHub Actions 用 Trusted Publishing 发 npm。
