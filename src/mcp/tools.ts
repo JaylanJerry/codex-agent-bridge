@@ -247,7 +247,7 @@ export function buildMcpTools(debug = debugWorkersAllowed()): McpTool[] {
     {
       name: "bridge_doctor",
       description:
-        "Check git, Node, Job Object, worker adapters, credential presence (not values), Codex MCP registration, and optional orphan worktrees.",
+        "Check git, Node, Job Object, worker adapters, credential presence (not values), Codex MCP registration, and optional orphan worktrees. DeepSeek reports transport=acp and integration=official|legacy|missing. A source checkout is legacy, not official runtime ready.",
       inputSchema: {
         type: "object",
         properties: {
@@ -258,7 +258,8 @@ export function buildMcpTools(debug = debugWorkersAllowed()): McpTool[] {
     },
     {
       name: "bridge_agents",
-      description: "List Worker profiles and whether they are available on this machine. Does not print secrets.",
+      description:
+        "List Worker profiles and whether they are available on this machine. DeepSeek availability is legacy source ACP or missing; official runtime is currently unavailable. Does not print secrets.",
       inputSchema: {
         type: "object",
         properties: {},
