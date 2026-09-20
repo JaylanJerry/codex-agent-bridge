@@ -110,10 +110,16 @@ test("CLI replay loop: run, continue, approve checkpoint", () => {
 });
 
 test("CLI doctor and needs-attention listing", () => {
-  const doctor = bridge(process.cwd(), ["doctor"]);
+  const doctor = bridge(process.cwd(), ["doctor", "--json"]);
   assert.equal(doctor.status, 0);
   assert.ok(doctor.parsed.version);
   assert.ok((doctor.parsed.checks ?? []).some((check) => check.id === "git" && check.ok));
+  const human = spawnSync(process.execPath, ["--import", "tsx", cli, "doctor"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.match(human.stdout, /Agent Bridge installed/);
+  assert.equal(/Error:\s*undefined/.test(human.stdout), false);
 
   const root = mkdtempSync(join(tmpdir(), "ab-cli-attn-"));
   git(root, ["init"]);

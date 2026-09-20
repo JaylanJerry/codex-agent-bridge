@@ -61,7 +61,7 @@ function probeJobObject(): DoctorCheck {
     return {
       id: "job-object",
       ok: false,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: error instanceof Error && error.message ? error.message : "Job Object probe failed",
     };
   }
 }
@@ -249,4 +249,121 @@ export function runDoctor(opts: { repoRoot: string; projectPath?: string }): Doc
     checks,
     agents,
   };
+}
+
+function mark(ok: boolean): string {
+  return ok ? "✓" : "✗";
+}
+
+function hintForCheck(check: DoctorCheck): string | undefined {
+  if (check.ok) return undefined;
+  switch (check.id) {
+    case "git":
+      return "Install Git and make sure `git` is on PATH.";
+    case "tsx":
+      return "Run `npx -y codex-agent-bridge` or `npm install` so tsx is available.";
+    case "job-object":
+      return "Windows Job Object failed. Reinstall Node 22+ and retry doctor.";
+    case "codex-mcp":
+      return "Run `npx -y codex-agent-bridge`, then start a new Codex session.";
+    case "codex-skill":
+      return "Run `npx -y codex-agent-bridge` to install the Codex Skill.";
+    case "worker-ready":
+      return "Install and sign in to Claude Code, or install DeepSeek Harness and set DEEPSEEK_API_KEY. Bridge does not configure models.";
+    case "project-git":
+      return "Pass a git repository as `--project`. Run `git init` if this folder is not a repo.";
+    case "core-lock":
+      return "Another Writer may still hold the project lock. Close the other Bridge process, or wait if the holder pid is still alive.";
+    case "tasks-json":
+      return "tasks.json is corrupted. Do not treat it as empty. Restore from backup or inspect the file.";
+    case "orphan-worktrees":
+      return "Run `bridge_prune` / `codex-agent-bridge prune --project <repo>` after confirming no in-flight task owns those worktrees.";
+    default:
+      return "See the check detail above.";
+  }
+}
+
+function hintForAgent(agent: AgentInfo): string | undefined {
+  if (agent.available && (agent.id !== "claude" || !agent.detail.includes("credentials file not found"))) {
+    return undefined;
+  }
+  if (agent.id === "claude") {
+    if (agent.detail.includes("adapter missing")) {
+      return "Run `npx -y codex-agent-bridge` so the Claude ACP adapter is installed.";
+    }
+    return "Sign in to Claude Code once on this machine. Bridge does not store Anthropic keys.";
+  }
+  if (agent.id === "deepseek") {
+    if (agent.detail.includes("integration=missing")) {
+      return "Install DeepSeek Harness source, or set AGENT_BRIDGE_DEEPSEEK_ROOT. This is a legacy source ACP path.";
+    }
+    if (agent.detail.includes("credentials=missing")) {
+      return "Set DEEPSEEK_API_KEY or put it in ~/.dsh/.credentials.yaml. Bridge does not print the key.";
+    }
+  }
+  return undefined;
+}
+
+export function formatDoctorReport(report: DoctorReport): string {
+  const git = report.checks.find((check) => check.id === "git");
+  const tsx = report.checks.find((check) => check.id === "tsx");
+  const claude = report.agents.find((agent) => agent.id === "claude");
+  const deepseek = report.agents.find((agent) => agent.id === "deepseek");
+  const project = report.checks.find((check) => check.id === "project-git");
+  const claudeReady = Boolean(
+    claude?.available && !claude.detail.includes("credentials file not found"),
+  );
+  const deepseekLegacy = deepseek?.detail.includes("integration=legacy") ?? false;
+  const lines = [
+    `Agent Bridge doctor v${report.version}`,
+    "",
+    `${mark(Boolean(tsx?.ok))} Agent Bridge installed`,
+    `${mark(Boolean(git?.ok))} Git available`,
+    `${mark(claudeReady)} Claude ACP available`,
+    `${mark(deepseekLegacy)} DeepSeek ACP legacy available`,
+  ];
+  if (project) {
+    lines.push(`${mark(project.ok)} Workspace ready`);
+  } else {
+    lines.push("· Workspace not checked (pass --project <git-repo>)");
+  }
+  lines.push("");
+
+  const problems: string[] = [];
+  for (const check of report.checks) {
+    if (check.ok) continue;
+    const hint = hintForCheck(check);
+    problems.push(`Missing: ${check.id}`);
+    problems.push(`Why: ${check.detail || "unknown"}`);
+    if (hint) problems.push(`Fix: ${hint}`);
+    problems.push("");
+  }
+  for (const agent of report.agents) {
+    if (agent.id === "replay") continue;
+    const hint = hintForAgent(agent);
+    if (!hint) continue;
+    problems.push(`Missing: worker ${agent.id}`);
+    problems.push(`Why: ${agent.detail || "unknown"}`);
+    problems.push(`Fix: ${hint}`);
+    problems.push("");
+  }
+  if (problems.length === 0) {
+    lines.push("All required checks passed. Reopen Codex if you just installed MCP.");
+  } else {
+    lines.push("What to fix:");
+    lines.push(...problems);
+  }
+  lines.push("Checks:");
+  for (const check of report.checks) {
+    lines.push(`${check.ok ? "ok  " : "FAIL"} ${check.id}: ${check.detail || "unknown"}`);
+  }
+  lines.push("Workers:");
+  for (const agent of report.agents) {
+    lines.push(`${agent.available ? "ok  " : "no  "} ${agent.id}: ${agent.detail || "unknown"}`);
+  }
+  const text = lines.join("\n");
+  if (/Error:\s*undefined/i.test(text)) {
+    return text.replace(/Error:\s*undefined/gi, "unknown error");
+  }
+  return text;
 }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { runDoctor } from "../src/core/doctor.ts";
+import { formatDoctorReport, runDoctor } from "../src/core/doctor.ts";
 import { dispatch } from "../src/api/client.ts";
 import { createTaskWorktree } from "../src/workspace/worktree.ts";
 import { ensureRepoDataDir } from "../src/persistence/layout.ts";
@@ -30,6 +30,17 @@ test("doctor reports version, workers, and never prints secret values", async ()
   const dumped = JSON.stringify(report);
   assert.equal(/sk-[A-Za-z0-9_-]{8,}/.test(dumped), false);
   assert.equal(/DEEPSEEK_API_KEY\s*[=:]\s*\S+/.test(dumped), false);
+  const text = formatDoctorReport(report);
+  assert.match(text, /Agent Bridge installed/);
+  assert.match(text, /Git available/);
+  assert.match(text, /Claude ACP available/);
+  assert.match(text, /DeepSeek ACP legacy available/);
+  assert.equal(/Error:\s*undefined/.test(text), false);
+  if (text.includes("✗")) {
+    assert.match(text, /Missing:/);
+    assert.match(text, /Why:/);
+    assert.match(text, /Fix:/);
+  }
 
   const viaDispatch = await dispatch({ command: "doctor" });
   assert.equal(viaDispatch.ok, true);
